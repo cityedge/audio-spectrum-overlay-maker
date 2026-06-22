@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Audio Spectrum Overlay Maker v1.0.0 GUI."""
+"""Audio Spectrum Overlay Maker v1.1.1 GUI."""
 from __future__ import annotations
 
 import os
@@ -25,9 +25,11 @@ from spectrum_engine import (
     RenderStyle,
     MotionSettings,
     EncodeSettings,
+    TransformSettings,
     analyze_preview_segment,
     build_default_output_path,
     color_to_hex,
+    compute_band_color_offset,
     draw_spectrum_frame,
     find_loud_segment_start,
     parse_color,
@@ -46,12 +48,31 @@ TOOLTIPS: dict[str, str] = {
     "audio_file": "解析するWAV / MP3 / M4Aなどの音源ファイルです。出力動画には音声は入りません。",
     "output_dir": "生成したスペアナ動画を保存するフォルダです。未指定の場合は音源ファイルと同じフォルダに保存します。",
     "preset": "全設定をまとめて呼び出すプリセットです。システムプリセットは削除できません。設定を変更するとカスタムになります。",
+    "language": "UI表示言語を切り替えます。プリセットには保存されません。",
+    "choose": "ファイルまたはフォルダを選択します。",
+    "save_preset": "現在の設定をユーザープリセットとして保存します。",
+    "delete_preset": "選択中のユーザープリセットを削除します。システムプリセットは削除できません。",
+    "display_mode": "片側バーまたは両側バーを選びます。両側バーは中央線から上下に伸びます。",
+    "scroll_mode": "バー位置は固定したまま、担当する周波数帯域を左右にローテーションします。",
+    "scroll_step_frames": "何フレームごとに帯域を1つシフトするかを指定します。小さいほどスクロールが速く見えます。",
+    "preview_video": "音源の先頭から短いプレビューMP4を書き出します。",
+    "motion_preview": "実際の音源を使ってGUI内で短い動きプレビューを再生します。",
+    "full_render": "音源全体に同期したスペアナMP4を書き出します。",
+    "open_output": "現在指定している出力先フォルダを開きます。",
+    "color_button": "色選択ダイアログを開きます。",
+    "advanced_recalc": "定性的な生成・動き設定から詳細パラメータを再計算します。",
+    "still_canvas": "現在の見た目設定を静止画として確認します。",
+    "motion_canvas": "実際の音源を解析した動きプレビューを表示します。",
+    "stop": "動きプレビューの再生を停止します。",
+    "preview_fit_mode": "左ペインのプレビューを、高さ基準で縮小するか、幅基準で縮小するかを選びます。",
     "width": "生成するスペアナ素材の横幅です。",
     "height": "生成するスペアナ素材の高さです。",
     "fps": "動画のフレームレートです。標準は30fpsです。",
     "bars": "横に並ぶ表示バー数です。内部解析バー数とは分離されています。18/24/32のほか、高解像度用に48/64も選べます。",
-    "background_color": "素材動画の背景色です。標準は黒です。比較（明）合成や黒をクロマキーで抜く用途に向きます。",
-    "bar_color": "スペアナバーの色です。標準は白です。黒背景に白バーが最も安定した基本形です。",
+    "background_color": "通常は黒のまま使います。ペア出力ではマット側は自動的に白背景になります。特殊用途や検証用の詳細設定です。",
+    "bar_color": "バーの基準色です。オーバーレイ素材としては白系が最も扱いやすいです。縦グラデーションでは中央/下側、帯域グラデーションでは低域側の色になります。",
+    "bar_color2": "バーの第2色です。2色を同じにすると単色になります。色付き素材はブレンド/クロマキー合成で扱いが難しくなる場合があります。",
+    "color_mode": "色の付け方です。基本は白-白のまま使うのが安全です。帯域グラデーションは、スクロール時に色も一緒に回転します。",
     "bar_width_percent": "各バーの太さです。値を下げるとバーの中心位置はそのままで、バーだけが細くなり、バー間隔が広がります。",
     "corner_radius": "バーの角丸半径です。大きくするとカプセル形状に近づきます。",
     "max_height_percent": "バーが使う最大高さです。値を上げるとピーク時のバーが高くなります。",
@@ -72,6 +93,7 @@ TOOLTIPS: dict[str, str] = {
     "preview_start": "自動検出を使わない場合に、何秒地点からプレビューするかを指定します。",
     "motion_preview_duration": "GUI内で再生する動きプレビューの長さです。標準は10秒です。再生後は停止します。",
     "preview_duration": "動画編集ソフトで試すために書き出す短いプレビューMP4の長さです。プレビューMP4は常に音源の先頭から生成します。標準は30秒です。",
+    "pair_output": "オンにすると、通常のスペアナ動画に加えて、比較（暗）用のマット動画を同時に出力します。マットは白地に黒いスペアナ形状です。",
     "warmup": "プレビュー開始位置より少し前から内部解析する秒数です。曲中プレビューの動きを全体生成時に近づけます。",
     "sample_rate": "解析用に内部変換するサンプルレートです。通常は変更不要です。",
     "analysis_bands": "内部で解析するバー数です。表示バー数とは別に固定することで、表示バー数を変えても動きの印象が変わりにくくなります。",
@@ -95,12 +117,29 @@ TOOLTIPS_EN: dict[str, str] = {
     "audio_file": "Audio file to analyze. The generated overlay video does not include audio.",
     "output_dir": "Folder where generated spectrum videos are saved. If empty, the audio file folder is used.",
     "preset": "Loads/saves the settings in the right pane. System presets cannot be deleted.",
+    "language": "Switches the UI language. This is not saved in presets.",
+    "choose": "Choose a file or folder.",
+    "save_preset": "Save the current settings as a user preset.",
+    "delete_preset": "Delete the selected user preset. System presets cannot be deleted.",
+    "display_mode": "Choose single-sided or dual-sided bars. Dual-sided bars grow upward and downward from the center line.",
+    "scroll_mode": "Rotates assigned frequency bands left or right while bar positions stay fixed.",
+    "scroll_step_frames": "How many frames pass before the band assignment shifts by one bar.",
+    "preview_video": "Writes a short preview MP4 from the beginning of the audio.",
+    "motion_preview": "Play a short in-app motion preview using the actual audio file.",
+    "full_render": "Writes a full-length spectrum MP4 synchronized to the audio.",
+    "open_output": "Open the currently selected output folder.",
+    "color_button": "Open the color picker.",
+    "advanced_recalc": "Recalculate detailed parameters from the qualitative motion controls.",
+    "stop": "Stop the motion preview.",
+    "preview_fit_mode": "Choose whether the left preview area scales previews mainly by height or by width.",
     "width": "Width of the generated spectrum overlay.",
     "height": "Height of the generated spectrum overlay.",
     "fps": "Video frame rate.",
     "bars": "Number of visible bars. Internal analysis bands are separate.",
-    "background_color": "Background color of the overlay video.",
-    "bar_color": "Spectrum bar color.",
+    "background_color": "Usually keep this black. Pair-output matte videos automatically use a white background. This is an advanced/special-use setting.",
+    "bar_color": "Primary bar color. White is safest for overlay compositing. In vertical gradient mode this is the inner/base color; in band gradient mode this is the low-band color.",
+    "bar_color2": "Second bar color. If both colors are the same, the result is effectively solid-color. Colored overlays may be harder to composite with blend modes or chroma key.",
+    "color_mode": "Color behavior. White-to-white is safest for overlay use. Band gradient rotates together with integer scroll.",
     "bar_width_percent": "Bar width. Lower values make each bar thinner and gaps wider.",
     "corner_radius": "Rounded corner radius. Higher values make capsule-like bars.",
     "max_height_percent": "Maximum bar height.",
@@ -121,6 +160,7 @@ TOOLTIPS_EN: dict[str, str] = {
     "preview_start": "Manual start time for motion preview when auto detection is off.",
     "motion_preview_duration": "Duration of the in-app motion preview.",
     "preview_duration": "Duration of the preview MP4. Preview MP4 is generated from the start of the audio.",
+    "pair_output": "Also writes a Compare/Darken matte video. The matte has a white background and the spectrum shape in black.",
     "warmup": "Analyzes slightly before the preview start to make preview motion closer to full render.",
     "sample_rate": "Internal analysis sample rate.",
     "analysis_bands": "Number of internal analysis bands, separate from visible bar count.",
@@ -161,10 +201,14 @@ UI_TEXT = {
         "advanced_tab": "詳細設定",
         "audio_file": "音源",
         "output_dir": "出力先",
+        "display_mode": "表示タイプ",
+        "color_mode": "色モード",
         "preset": "プリセット",
+        "preview_fit_mode": "プレビュー基準",
         "bars": "バー本数",
-        "background_color": "背景色",
-        "bar_color": "バー色",
+        "background_color": "背景色（詳細）",
+        "bar_color": "バー色1",
+        "bar_color2": "バー色2",
         "bar_width_percent": "バー幅%",
         "corner_radius": "角丸半径px",
         "max_height_percent": "最大高さ%",
@@ -177,6 +221,7 @@ UI_TEXT = {
         "preview_start": "手動開始秒",
         "motion_preview_duration": "動きプレビュー秒数",
         "preview_duration": "動画プレビュー秒数",
+        "pair_output": "比較合成用マットも出力",
         "warmup": "ウォームアップ秒",
         "color_button": "色...",
         "advanced_recalc": "定性的設定から再計算",
@@ -224,10 +269,14 @@ UI_TEXT = {
         "advanced_tab": "Advanced",
         "audio_file": "Audio",
         "output_dir": "Output",
+        "display_mode": "Display Type",
+        "color_mode": "Color Mode",
         "preset": "Preset",
+        "preview_fit_mode": "Preview Fit",
         "bars": "Bars",
-        "background_color": "Background",
-        "bar_color": "Bar Color",
+        "background_color": "Background (Advanced)",
+        "bar_color": "Bar Color 1",
+        "bar_color2": "Bar Color 2",
         "bar_width_percent": "Bar Width %",
         "corner_radius": "Corner Radius px",
         "max_height_percent": "Max Height %",
@@ -240,6 +289,7 @@ UI_TEXT = {
         "preview_start": "Manual Start sec",
         "motion_preview_duration": "Motion Preview sec",
         "preview_duration": "Video Preview sec",
+        "pair_output": "Also output matte pair",
         "warmup": "Warmup sec",
         "color_button": "Color...",
         "advanced_recalc": "Recalculate from qualitative controls",
@@ -272,6 +322,18 @@ UI_TEXT = {
 }
 
 CHOICE_OPTIONS = {
+    "scroll_mode": {
+        "日本語": ["なし", "左", "右"],
+        "English": ["Off", "Left", "Right"],
+    },
+    "display_mode": {
+        "日本語": ["片側バー", "両側バー"],
+        "English": ["Single-sided bar", "Dual-sided bar"],
+    },
+    "color_mode": {
+        "日本語": ["縦グラデーション", "帯域グラデーション"],
+        "English": ["Vertical Gradient", "Band Gradient"],
+    },
     "response_speed": {
         "日本語": ["ゆったり", "標準", "速い", "カスタム"],
         "English": ["Slow", "Standard", "Fast", "Custom"],
@@ -295,6 +357,10 @@ CHOICE_OPTIONS = {
     "frequency_mode": {
         "日本語": ["自動", "手動"],
         "English": ["Auto", "Manual"],
+    },
+    "preview_fit_mode": {
+        "日本語": ["高さで揃える", "幅で揃える"],
+        "English": ["Fit by Height", "Fit by Width"],
     },
 }
 
@@ -330,9 +396,10 @@ ADVANCED_SETTING_KEYS = {
 
 OPERATIONAL_KEYS = {
     "input_file", "output_dir", "preset", "language",
+    "preview_fit_mode",
     "auto_preview_segment", "scan_seconds",
     "preview_start", "motion_preview_duration",
-    "preview_duration", "warmup",
+    "preview_duration", "pair_output", "warmup",
 }
 
 
@@ -358,6 +425,8 @@ class App(tk.Tk):
         self.log_queue: queue.Queue[str] = queue.Queue()
         self.worker_thread: threading.Thread | None = None
         self.motion_thread: threading.Thread | None = None
+        self.preview_base_height = 220
+        self.preview_resize_after_id: str | None = None
 
         self._init_style()
         self._init_vars()
@@ -387,12 +456,18 @@ class App(tk.Tk):
             "output_dir": tk.StringVar(),
             "preset": tk.StringVar(),
             "language": tk.StringVar(value="日本語"),
+            "preview_fit_mode": tk.StringVar(value="高さで揃える"),
             "width": tk.IntVar(value=720),
             "height": tk.IntVar(value=280),
             "fps": tk.IntVar(value=30),
             "bars": tk.IntVar(value=24),
+            "display_mode": tk.StringVar(value="片側バー"),
+            "color_mode": tk.StringVar(value="縦グラデーション"),
+            "scroll_mode": tk.StringVar(value="なし"),
+            "scroll_step_frames": tk.IntVar(value=2),
             "background_color": tk.StringVar(value="#000000"),
             "bar_color": tk.StringVar(value="#FFFFFF"),
+            "bar_color2": tk.StringVar(value="#FFFFFF"),
             "bar_width_percent": tk.IntVar(value=62),
             "corner_radius": tk.IntVar(value=18),
             "max_height_percent": tk.IntVar(value=78),
@@ -413,6 +488,7 @@ class App(tk.Tk):
             "preview_start": tk.DoubleVar(value=0.0),
             "motion_preview_duration": tk.DoubleVar(value=10.0),
             "preview_duration": tk.DoubleVar(value=30.0),
+            "pair_output": tk.BooleanVar(value=False),
             "warmup": tk.DoubleVar(value=5.0),
             "sample_rate": tk.IntVar(value=24000),
             "fft_size": tk.IntVar(value=1024),
@@ -511,6 +587,7 @@ class App(tk.Tk):
         if not self.motion_frames:
             self._draw_canvas_message(self.motion_canvas, self.ui("motion_message"))
         self.update_advanced_state_label()
+        self.after_idle(self.refresh_preview_layout)
 
     def _build_ui(self) -> None:
         root = ttk.Frame(self, padding=12)
@@ -531,6 +608,7 @@ class App(tk.Tk):
         self.register_text(lang_label, "language_label")
         self.language_combo = ttk.Combobox(lang_box, textvariable=self.vars["language"], values=["日本語", "English"], state="readonly", width=10)
         self.language_combo.pack(side="left")
+        self.add_tooltip(self.language_combo, "language")
         self.language_combo.bind("<<ComboboxSelected>>", lambda _e: self.apply_language())
 
         top = ttk.Frame(root, padding=10, style="Card.TFrame")
@@ -545,15 +623,21 @@ class App(tk.Tk):
         file_box.grid(row=0, column=0, sticky="ew", padx=(0, 10))
         file_box.columnconfigure(1, weight=1)
         self._label(file_box, "音源", "audio_file").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=(0, 6))
-        ttk.Entry(file_box, textvariable=self.vars["input_file"]).grid(row=0, column=1, sticky="ew", padx=(0, 6), pady=(0, 6))
+        input_entry = ttk.Entry(file_box, textvariable=self.vars["input_file"])
+        input_entry.grid(row=0, column=1, sticky="ew", padx=(0, 6), pady=(0, 6))
+        self.add_tooltip(input_entry, "input_file")
         choose_input_btn = ttk.Button(file_box, text=self.ui("choose"), command=self.choose_input)
         choose_input_btn.grid(row=0, column=2, sticky="w", pady=(0, 6))
         self.register_text(choose_input_btn, "choose")
+        self.add_tooltip(choose_input_btn, "choose")
         self._label(file_box, "出力先", "output_dir").grid(row=1, column=0, sticky="w", padx=(0, 6))
-        ttk.Entry(file_box, textvariable=self.vars["output_dir"]).grid(row=1, column=1, sticky="ew", padx=(0, 6))
+        output_entry = ttk.Entry(file_box, textvariable=self.vars["output_dir"])
+        output_entry.grid(row=1, column=1, sticky="ew", padx=(0, 6))
+        self.add_tooltip(output_entry, "output_dir")
         choose_output_btn = ttk.Button(file_box, text=self.ui("choose"), command=self.choose_output_dir)
         choose_output_btn.grid(row=1, column=2, sticky="w")
         self.register_text(choose_output_btn, "choose")
+        self.add_tooltip(choose_output_btn, "choose")
 
         preset_box = ttk.Frame(top, style="Card.TFrame")
         preset_box.grid(row=0, column=1, sticky="nw", padx=(10, 0))
@@ -561,33 +645,69 @@ class App(tk.Tk):
         self.preset_combo = ttk.Combobox(preset_box, textvariable=self.vars["preset"], values=self.preset_manager.names(), state="readonly", width=28)
         self.preset_combo.grid(row=0, column=1, sticky="w", padx=(0, 6))
         self.preset_combo.bind("<<ComboboxSelected>>", self.on_preset_selected)
+        self.add_tooltip(self.preset_combo, "preset")
         save_btn = ttk.Button(preset_box, text=self.ui("save_preset"), command=self.save_preset)
         save_btn.grid(row=0, column=2, sticky="w", padx=(0, 6))
         self.register_text(save_btn, "save_preset")
+        self.add_tooltip(save_btn, "save_preset")
         delete_btn = ttk.Button(preset_box, text=self.ui("delete_preset"), command=self.delete_preset, style="Danger.TButton")
         delete_btn.grid(row=0, column=3, sticky="w")
         self.register_text(delete_btn, "delete_preset")
+        self.add_tooltip(delete_btn, "delete_preset")
+        self._label(preset_box, "プレビュー基準", "preview_fit_mode").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        self.preview_fit_combo = ttk.Combobox(preset_box, textvariable=self.vars["preview_fit_mode"], values=self.choice_values("preview_fit_mode"), state="readonly", width=18)
+        self.preview_fit_combo.grid(row=1, column=1, sticky="w", pady=(8, 0))
+        self.control_widgets["preview_fit_mode"] = self.preview_fit_combo
+        self.add_tooltip(self.preview_fit_combo, "preview_fit_mode")
 
         main = ttk.PanedWindow(root, orient="horizontal")
         main.grid(row=2, column=0, sticky="nsew")
-        preview_frame = ttk.Frame(main, padding=10, style="Card.TFrame")
+        preview_outer = ttk.Frame(main, padding=10, style="Card.TFrame")
         settings_frame = ttk.Frame(main, padding=(10, 0, 0, 0))
-        main.add(preview_frame, weight=3)
+        main.add(preview_outer, weight=3)
         main.add(settings_frame, weight=2)
 
+        preview_outer.rowconfigure(0, weight=1)
+        preview_outer.columnconfigure(0, weight=1)
+        self.preview_scroll_canvas = tk.Canvas(preview_outer, highlightthickness=0, background="#ffffff")
+        preview_scrollbar = ttk.Scrollbar(preview_outer, orient="vertical", command=self.preview_scroll_canvas.yview)
+        self.preview_scroll_canvas.configure(yscrollcommand=preview_scrollbar.set)
+        self.preview_scroll_canvas.grid(row=0, column=0, sticky="nsew")
+        preview_scrollbar.grid(row=0, column=1, sticky="ns")
+
+        preview_frame = ttk.Frame(self.preview_scroll_canvas, padding=0, style="Card.TFrame")
+        self.preview_inner_window = self.preview_scroll_canvas.create_window((0, 0), window=preview_frame, anchor="nw")
+
+        def _on_preview_frame_configure(_event=None):
+            self.preview_scroll_canvas.configure(scrollregion=self.preview_scroll_canvas.bbox("all"))
+
+        def _on_preview_canvas_configure(event):
+            self.preview_scroll_canvas.itemconfigure(self.preview_inner_window, width=event.width)
+            self.schedule_preview_layout_refresh()
+
+        def _on_preview_mousewheel(event):
+            delta = -1 * int(event.delta / 120) if event.delta else 0
+            if delta:
+                self.preview_scroll_canvas.yview_scroll(delta, "units")
+
+        preview_frame.bind("<Configure>", _on_preview_frame_configure)
+        self.preview_scroll_canvas.bind("<Configure>", _on_preview_canvas_configure)
+        self.preview_scroll_canvas.bind("<Enter>", lambda _e: self.preview_scroll_canvas.bind_all("<MouseWheel>", _on_preview_mousewheel))
+        self.preview_scroll_canvas.bind("<Leave>", lambda _e: self.preview_scroll_canvas.unbind_all("<MouseWheel>"))
+
         preview_frame.columnconfigure(0, weight=1)
-        preview_frame.rowconfigure(1, weight=1, minsize=150)
-        preview_frame.rowconfigure(3, weight=1, minsize=150)
         still_title = ttk.Label(preview_frame, text=self.ui("still_preview"), style="Card.TLabel", font=("Yu Gothic UI", 10, "bold"))
         still_title.grid(row=0, column=0, sticky="w")
+        self.preview_still_title = still_title
         self.register_text(still_title, "still_preview")
-        self.still_canvas = tk.Canvas(preview_frame, background="#F2F2F2", highlightthickness=0)
-        self.still_canvas.grid(row=1, column=0, sticky="nsew", pady=(4, 12))
-        self.still_canvas.bind("<Configure>", lambda _e: self.redraw_still_canvas())
+        self.still_canvas = tk.Canvas(preview_frame, background="#F2F2F2", highlightthickness=0, height=self.preview_base_height)
+        self.still_canvas.grid(row=1, column=0, sticky="ew", pady=(4, 12))
+        self.still_canvas.bind("<Configure>", lambda _e: self.schedule_preview_layout_refresh())
         self.add_tooltip(self.still_canvas, "still_canvas")
 
         motion_head = ttk.Frame(preview_frame, style="Card.TFrame")
         motion_head.grid(row=2, column=0, sticky="ew")
+        self.motion_head = motion_head
         motion_head.columnconfigure(0, weight=0)
         motion_head.columnconfigure(1, weight=1)
         motion_head.columnconfigure(2, weight=0)
@@ -600,12 +720,14 @@ class App(tk.Tk):
         self.motion_button = ttk.Button(motion_head, text=self.ui("motion_preview"), command=self.start_motion_preview)
         self.motion_button.grid(row=0, column=2, sticky="e")
         self.register_text(self.motion_button, "motion_preview")
+        self.add_tooltip(self.motion_button, "motion_preview")
         self.stop_motion_button = ttk.Button(motion_head, text=self.ui("stop"), command=self.stop_motion_preview)
         self.stop_motion_button.grid(row=0, column=3, sticky="e", padx=(6, 0))
         self.register_text(self.stop_motion_button, "stop")
-        self.motion_canvas = tk.Canvas(preview_frame, background="#F2F2F2", highlightthickness=0)
-        self.motion_canvas.grid(row=3, column=0, sticky="nsew", pady=(4, 0))
-        self.motion_canvas.bind("<Configure>", lambda _e: self.redraw_motion_canvas())
+        self.add_tooltip(self.stop_motion_button, "stop")
+        self.motion_canvas = tk.Canvas(preview_frame, background="#F2F2F2", highlightthickness=0, height=self.preview_base_height)
+        self.motion_canvas.grid(row=3, column=0, sticky="ew", pady=(4, 0))
+        self.motion_canvas.bind("<Configure>", lambda _e: self.schedule_preview_layout_refresh())
         self._draw_canvas_message(self.motion_canvas, self.ui("motion_message"))
         self.add_tooltip(self.motion_canvas, "motion_canvas")
 
@@ -623,25 +745,33 @@ class App(tk.Tk):
         self.preview_button = ttk.Button(actions, text=self.ui("preview_video"), command=lambda: self.start_render(preview=True), style="Accent.TButton")
         self.preview_button.pack(side="left")
         self.register_text(self.preview_button, "preview_video")
+        self.add_tooltip(self.preview_button, "preview_video")
         self.full_button = ttk.Button(actions, text=self.ui("full_render"), command=lambda: self.start_render(preview=False), style="Accent.TButton")
         self.full_button.pack(side="left", padx=(6, 0))
         self.register_text(self.full_button, "full_render")
+        self.add_tooltip(self.full_button, "full_render")
+        self.pair_output_check = ttk.Checkbutton(actions, text=self.ui("pair_output"), variable=self.vars["pair_output"])
+        self.pair_output_check.pack(side="left", padx=(10, 0))
+        self.register_text(self.pair_output_check, "pair_output")
+        self.add_tooltip(self.pair_output_check, "pair_output")
         open_btn = ttk.Button(actions, text=self.ui("open_output"), command=self.open_output_folder)
         open_btn.pack(side="right")
         self.register_text(open_btn, "open_output")
+        self.add_tooltip(open_btn, "open_output")
         self.log_text = ScrolledText(bottom, height=4, wrap="word", font=("Consolas", 9))
         self.log_text.grid(row=1, column=0, sticky="ew", pady=(8, 0))
         self.log_text.configure(state="disabled")
 
     def _build_visual_tab(self) -> None:
-        tab = ttk.Frame(self.notebook, padding=12)
-        self.notebook.add(tab, text=self.ui("visual_tab"))
-        self.notebook_tabs.append((tab, "visual_tab"))
-        tab.columnconfigure(1, weight=1)
+        tab = self._make_scrollable_tab("見た目", "visual_tab")
         row = 0
+        self._combo(tab, row, "表示タイプ", "display_mode", self.choice_values("display_mode")); row += 1
+        self._combo(tab, row, "色モード", "color_mode", self.choice_values("color_mode")); row += 1
+        self._combo(tab, row, "スクロール", "scroll_mode", self.choice_values("scroll_mode")); row += 1
+        self._combo(tab, row, "シフト間隔", "scroll_step_frames", [1, 2, 3, 4, 6, 8]); row += 1
         self._combo(tab, row, "バー本数", "bars", [18, 24, 32, 48, 64]); row += 1
-        self._color_row(tab, row, "背景色", "background_color"); row += 1
-        self._color_row(tab, row, "バー色", "bar_color"); row += 1
+        self._color_row(tab, row, "バー色1", "bar_color"); row += 1
+        self._color_row(tab, row, "バー色2", "bar_color2"); row += 1
         self._scale(tab, row, "バー幅%", "bar_width_percent", 10, 100); row += 1
         self._spin(tab, row, "角丸半径px", "corner_radius", 0, 160, 1); row += 1
         self._scale(tab, row, "最大高さ%", "max_height_percent", 10, 95); row += 1
@@ -653,10 +783,7 @@ class App(tk.Tk):
         self._combo(tab, row, "fps", "fps", [24, 30, 60]); row += 1
 
     def _build_motion_tab(self) -> None:
-        tab = ttk.Frame(self.notebook, padding=12)
-        self.notebook.add(tab, text=self.ui("motion_tab"))
-        self.notebook_tabs.append((tab, "motion_tab"))
-        tab.columnconfigure(1, weight=1)
+        tab = self._make_scrollable_tab("生成・動き", "motion_tab")
         row = 0
         self._combo(tab, row, "反応の速さ", "response_speed", ["ゆったり", "標準", "速い", "カスタム"]); row += 1
         self._combo(tab, row, "上下動の強さ", "bounce_strength", ["控えめ", "標準", "大きい", "カスタム"]); row += 1
@@ -674,7 +801,7 @@ class App(tk.Tk):
         self._spin_float(tab, row, "ウォームアップ秒", "warmup", 0, 30, 1); row += 1
 
     def _build_advanced_tab(self) -> None:
-        tab = self._make_scrollable_tab("詳細設定")
+        tab = self._make_scrollable_tab("詳細設定", "advanced_tab")
         row = 0
         self._combo(tab, row, "周波数設定", "frequency_mode", ["自動", "手動"]); row += 1
         self._spin_float(tab, row, "最低周波数Hz", "freq_min", 20, 1000, 5); row += 1
@@ -683,6 +810,7 @@ class App(tk.Tk):
         recalc_btn = ttk.Button(tab, text=self.ui("advanced_recalc"), command=self.reset_advanced_from_qualitative)
         recalc_btn.grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, 8))
         self.register_text(recalc_btn, "advanced_recalc")
+        self.add_tooltip(recalc_btn, "advanced_recalc")
         row += 1
         self._check(tab, row, "詳細カスタム", "advanced_custom"); row += 1
         self._spin(tab, row, "sample rate", "sample_rate", 8000, 48000, 1000); row += 1
@@ -698,6 +826,7 @@ class App(tk.Tk):
         self._spin_float(tab, row, "Pulse amount", "pulse_amount", 0, 1.0, 0.01); row += 1
         self._spin_float(tab, row, "Pulse speed", "pulse_speed", 0.01, 0.95, 0.01); row += 1
         self._spin_float(tab, row, "Gamma", "gamma", 0.30, 2.00, 0.01); row += 1
+        self._color_row(tab, row, "背景色", "background_color"); row += 1
         ttk.Separator(tab).grid(row=row, column=0, columnspan=3, sticky="ew", pady=12); row += 1
         self._spin(tab, row, "CRF", "crf", 10, 35, 1); row += 1
         self._combo(tab, row, "Encoder", "encoder", ["libx264", "h264_nvenc"]); row += 1
@@ -763,11 +892,11 @@ class App(tk.Tk):
         self.add_tooltip(entry, key)
         self.add_tooltip(btn, key)
 
-    def _make_scrollable_tab(self, title: str) -> ttk.Frame:
+    def _make_scrollable_tab(self, title: str, tab_key: str | None = None) -> ttk.Frame:
         outer = ttk.Frame(self.notebook)
-        self.notebook.add(outer, text=self.ui("advanced_tab") if title == "詳細設定" else title)
-        if title == "詳細設定":
-            self.notebook_tabs.append((outer, "advanced_tab"))
+        self.notebook.add(outer, text=self.ui(tab_key) if tab_key else title)
+        if tab_key:
+            self.notebook_tabs.append((outer, tab_key))
         outer.rowconfigure(0, weight=1)
         outer.columnconfigure(0, weight=1)
 
@@ -827,12 +956,15 @@ class App(tk.Tk):
             if str(self.choice_to_ja(key, self.vars[key].get())) != "カスタム":
                 self.recompute_advanced_from_qualitative()
 
-        if key in {"width", "height", "bars", "background_color", "bar_color", "bar_width_percent", "corner_radius", "max_height_percent", "side_margin_percent", "bottom_margin_percent", "gamma"}:
+        if key in {"width", "height", "bars", "display_mode", "color_mode", "background_color", "bar_color", "bar_color2", "bar_width_percent", "corner_radius", "max_height_percent", "side_margin_percent", "bottom_margin_percent", "gamma", "scroll_mode", "scroll_step_frames"}:
             if key == "bars" and not bool(self.vars["advanced_custom"].get()):
                 self.recompute_advanced_from_qualitative()
             self.after_idle(self.update_still_preview)
 
-        if key not in {"input_file", "output_dir", "preset"}:
+        if key == "preview_fit_mode":
+            self.after_idle(self.refresh_preview_layout)
+
+        if key not in OPERATIONAL_KEYS and key not in {"input_file", "output_dir", "preset"}:
             self.motion_status.configure(text=("Needs update" if self.current_language()=="English" else "要更新"))
         self.update_advanced_state_label()
 
@@ -1017,6 +1149,11 @@ class App(tk.Tk):
         self.apply_in_progress = True
         try:
             values = dict(p.get("values", {}))
+            values.setdefault("display_mode", "片側バー")
+            values.setdefault("color_mode", "縦グラデーション")
+            values.setdefault("bar_color2", values.get("bar_color", "#FFFFFF"))
+            values.setdefault("scroll_mode", "なし")
+            values.setdefault("scroll_step_frames", 2)
             values.setdefault("frequency_mode", "自動")
             values.setdefault("sensitivity_level", "標準")
             values.setdefault("motion_detail", "標準")
@@ -1100,8 +1237,11 @@ class App(tk.Tk):
             height=int(self.vars["height"].get()),
             fps=int(self.vars["fps"].get()),
             bars=int(self.vars["bars"].get()),
+            display_mode=("dual" if self.choice_to_ja("display_mode", self.vars["display_mode"].get()) == "両側バー" else "single"),
             background_color=parse_color(self.vars["background_color"].get(), (0, 0, 0)),
             bar_color=parse_color(self.vars["bar_color"].get(), (255, 255, 255)),
+            bar_color2=parse_color(self.vars["bar_color2"].get(), (255, 255, 255)),
+            color_mode=("band" if self.choice_to_ja("color_mode", self.vars["color_mode"].get()) == "帯域グラデーション" else "vertical"),
             max_height_ratio=float(self.vars["max_height_percent"].get()) / 100.0,
             bottom_margin_ratio=float(self.vars["bottom_margin_percent"].get()) / 100.0,
             side_margin_ratio=float(self.vars["side_margin_percent"].get()) / 100.0,
@@ -1128,6 +1268,73 @@ class App(tk.Tk):
             pulse_amount=float(self.vars["pulse_amount"].get()),
             pulse_speed=float(self.vars["pulse_speed"].get()),
         )
+
+
+    def current_transform(self) -> TransformSettings:
+        mode_ja = self.choice_to_ja("scroll_mode", self.vars["scroll_mode"].get())
+        mode = {"左": "left", "右": "right"}.get(mode_ja, "none")
+        return TransformSettings(
+            display_bars=int(self.vars["bars"].get()),
+            shape_profile="neutral",
+            scroll_mode=mode,
+            scroll_step_frames=max(1, int(self.vars["scroll_step_frames"].get())),
+        )
+
+    def preview_fit_mode_ja(self) -> str:
+        return str(self.choice_to_ja("preview_fit_mode", self.vars["preview_fit_mode"].get()))
+
+    def preview_target_height(self) -> int:
+        """Return per-preview height for Fit by Height mode.
+
+        This is based on the visible left preview pane height minus the title,
+        motion controls, and vertical padding, divided by the two preview canvases.
+        """
+        try:
+            self.preview_scroll_canvas.update_idletasks()
+            visible_h = int(self.preview_scroll_canvas.winfo_height() or 0)
+        except Exception:
+            visible_h = 0
+        if visible_h <= 1:
+            return int(self.preview_base_height)
+
+        def _widget_h(widget: tk.Widget, fallback: int = 24) -> int:
+            try:
+                return max(int(widget.winfo_height() or 0), int(widget.winfo_reqheight() or 0), fallback)
+            except Exception:
+                return fallback
+
+        still_title_h = _widget_h(getattr(self, "preview_still_title", None), 24) if hasattr(self, "preview_still_title") else 24
+        motion_head_h = _widget_h(getattr(self, "motion_head", None), 32) if hasattr(self, "motion_head") else 32
+
+        # Still canvas pady=(4, 12), motion canvas pady=(4, 0), plus a small
+        # safety margin for theme borders/rounding.
+        vertical_padding = 4 + 12 + 4 + 8
+        usable = visible_h - still_title_h - motion_head_h - vertical_padding
+        return max(120, int(usable // 2))
+
+    def schedule_preview_layout_refresh(self) -> None:
+        try:
+            if self.preview_resize_after_id:
+                self.after_cancel(self.preview_resize_after_id)
+        except Exception:
+            pass
+        try:
+            self.preview_resize_after_id = self.after(60, self.refresh_preview_layout)
+        except Exception:
+            self.preview_resize_after_id = None
+
+    def refresh_preview_layout(self) -> None:
+        self.preview_resize_after_id = None
+        mode = self.preview_fit_mode_ja()
+        if mode == "高さで揃える":
+            target = self.preview_target_height()
+            try:
+                self.still_canvas.configure(height=target)
+                self.motion_canvas.configure(height=target)
+            except Exception:
+                pass
+        self.redraw_still_canvas()
+        self.redraw_motion_canvas()
 
     def resolve_frequency_range_for_run(self, input_path: Path, motion: MotionSettings, scan_seconds: float) -> MotionSettings:
         """Return a run-local MotionSettings with resolved frequency range.
@@ -1157,49 +1364,91 @@ class App(tk.Tk):
             encoder=str(self.vars["encoder"].get()),
         )
 
-    def _fit_photo(self, frame: np.ndarray, canvas: tk.Canvas) -> ImageTk.PhotoImage:
+    def _canvas_display_height(self, canvas: tk.Canvas) -> int:
+        try:
+            return max(120, int(float(canvas.cget("height") or 0)) or canvas.winfo_height() or self.preview_target_height())
+        except Exception:
+            return max(120, int(self.preview_base_height))
+
+    def _fit_photo(self, frame: np.ndarray, canvas: tk.Canvas) -> tuple[ImageTk.PhotoImage, int]:
         image = Image.fromarray(frame)
         canvas.update_idletasks()
         avail_w = max(240, canvas.winfo_width() or 640)
-        avail_h = max(120, canvas.winfo_height() or 220)
-        ratio = min(avail_w / image.width, avail_h / image.height)
+        avail_h = self._canvas_display_height(canvas)
+        if self.preview_fit_mode_ja() == "幅で揃える":
+            ratio = avail_w / image.width
+        else:
+            ratio = min(avail_w / image.width, avail_h / image.height)
         new_w = max(1, int(image.width * ratio))
         new_h = max(1, int(image.height * ratio))
         image = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
-        return ImageTk.PhotoImage(image)
+        return ImageTk.PhotoImage(image), new_h
 
     def _draw_canvas_message(self, canvas: tk.Canvas, message: str) -> None:
         canvas.delete("all")
         canvas.update_idletasks()
         w = max(240, canvas.winfo_width() or 640)
-        h = max(120, canvas.winfo_height() or 220)
+        h = self._canvas_display_height(canvas)
         canvas.create_text(w // 2, h // 2, text=message, fill="#6b7280", font=("Yu Gothic UI", 10))
 
     def _draw_on_canvas(self, canvas: tk.Canvas, photo: ImageTk.PhotoImage) -> None:
         canvas.delete("all")
         canvas.update_idletasks()
         w = max(240, canvas.winfo_width() or 640)
-        h = max(120, canvas.winfo_height() or 220)
+        h = self._canvas_display_height(canvas)
         x = w // 2
         y = h // 2
         canvas.create_image(x, y, image=photo, anchor="center")
 
     def redraw_still_canvas(self) -> None:
         if self.still_frame_array is None:
+            if self.preview_fit_mode_ja() == "高さで揃える":
+                try:
+                    self.still_canvas.configure(height=self.preview_target_height())
+                except Exception:
+                    pass
             self._draw_canvas_message(self.still_canvas, "プレビューを描画できません")
             return
-        self.still_photo = self._fit_photo(self.still_frame_array, self.still_canvas)
+        if self.preview_fit_mode_ja() == "高さで揃える":
+            target_h = self.preview_target_height()
+            try:
+                self.still_canvas.configure(height=target_h)
+            except Exception:
+                pass
+        self.still_photo, render_h = self._fit_photo(self.still_frame_array, self.still_canvas)
+        if self.preview_fit_mode_ja() == "幅で揃える":
+            target_h = render_h
+            try:
+                self.still_canvas.configure(height=max(120, target_h))
+            except Exception:
+                pass
         self._draw_on_canvas(self.still_canvas, self.still_photo)
 
     def redraw_motion_canvas(self) -> None:
         if not self.motion_frames:
+            if self.preview_fit_mode_ja() == "高さで揃える":
+                try:
+                    self.motion_canvas.configure(height=self.preview_target_height())
+                except Exception:
+                    pass
             if self.motion_status.cget("text") == "解析中":
                 self._draw_canvas_message(self.motion_canvas, "Analyzing audio..." if self.current_language()=="English" else "実音源を解析しています...")
             else:
                 self._draw_canvas_message(self.motion_canvas, "音源を選択して「動きプレビュー」を押してください")
             return
         idx = min(max(self.motion_index - 1, 0), len(self.motion_frames) - 1)
-        self.current_motion_photo = self._fit_photo(self.motion_frames[idx], self.motion_canvas)
+        if self.preview_fit_mode_ja() == "高さで揃える":
+            try:
+                self.motion_canvas.configure(height=self.preview_target_height())
+            except Exception:
+                pass
+        self.current_motion_photo, render_h = self._fit_photo(self.motion_frames[idx], self.motion_canvas)
+        if self.preview_fit_mode_ja() == "幅で揃える":
+            target_h = render_h
+            try:
+                self.motion_canvas.configure(height=max(120, target_h))
+            except Exception:
+                pass
         self._draw_on_canvas(self.motion_canvas, self.current_motion_photo)
 
     def update_still_preview(self) -> None:
@@ -1246,6 +1495,7 @@ class App(tk.Tk):
         self.motion_button.configure(state="disabled")
         style = self.current_style()
         motion = self.current_motion()
+        transform = self.current_transform()
         auto = bool(self.vars["auto_preview_segment"].get())
         start = float(self.vars["preview_start"].get())
         duration = float(self.vars["motion_preview_duration"].get())
@@ -1259,6 +1509,7 @@ class App(tk.Tk):
                     input_path=input_path,
                     style=style,
                     motion=motion,
+                    transform=transform,
                     start=start,
                     duration=duration,
                     warmup=warmup,
@@ -1266,7 +1517,7 @@ class App(tk.Tk):
                     scan_seconds=scan_seconds,
                     log_callback=self.log_from_thread,
                 )
-                self.after(0, lambda v=values, st=detected_start, sty=style: self._load_motion_frames(v, st, sty))
+                self.after(0, lambda v=values, st=detected_start, sty=style, tr=transform: self._load_motion_frames(v, st, sty, tr))
             except Exception as exc:
                 self.log_from_thread("ERROR: " + str(exc))
                 self.after(0, lambda e=str(exc): self._motion_preview_failed(e))
@@ -1274,11 +1525,12 @@ class App(tk.Tk):
         self.motion_thread = threading.Thread(target=worker, daemon=True)
         self.motion_thread.start()
 
-    def _load_motion_frames(self, values, detected_start: float, style: RenderStyle) -> None:
+    def _load_motion_frames(self, values, detected_start: float, style: RenderStyle, transform: TransformSettings | None = None) -> None:
         try:
             frames: list[np.ndarray] = []
-            for v in values:
-                frame = draw_spectrum_frame(v, style)
+            for i, v in enumerate(values):
+                band_offset = compute_band_color_offset(i, transform.scroll_mode, transform.scroll_step_frames) if transform is not None else 0
+                frame = draw_spectrum_frame(v, style, band_color_offset=band_offset)
                 frames.append(frame)
             self.motion_frames = frames
             self.motion_photos = []
@@ -1312,7 +1564,17 @@ class App(tk.Tk):
             self.motion_status.configure(text="Stopped" if self.current_language()=="English" else "停止")
             return
         frame = self.motion_frames[self.motion_index]
-        self.current_motion_photo = self._fit_photo(frame, self.motion_canvas)
+        self.current_motion_photo, render_h = self._fit_photo(frame, self.motion_canvas)
+        if self.preview_fit_mode_ja() == "幅で揃える":
+            try:
+                self.motion_canvas.configure(height=max(120, render_h))
+            except Exception:
+                pass
+        else:
+            try:
+                self.motion_canvas.configure(height=self.preview_target_height())
+            except Exception:
+                pass
         self._draw_on_canvas(self.motion_canvas, self.current_motion_photo)
         self.motion_index += 1
         delay = int(1000 / max(1, int(self.vars["fps"].get())))
@@ -1340,6 +1602,7 @@ class App(tk.Tk):
         output_dir = Path(out_dir_text) if out_dir_text else input_path.parent
         style = self.current_style()
         motion = self.current_motion()
+        transform = self.current_transform()
         encode = self.current_encode()
         # The exported preview MP4 is intended to be placed at the beginning of
         # the editor timeline, so it is always generated from the beginning of
@@ -1368,11 +1631,13 @@ class App(tk.Tk):
                     output_path=output_path,
                     style=style,
                     motion=motion,
+                    transform=transform,
                     encode=encode,
                     start=start,
                     duration=duration,
                     warmup=warmup,
                     log_callback=self.log_from_thread,
+                    write_matte=bool(self.vars["pair_output"].get()),
                 )
                 self.log_from_thread(f"Saved to: {actual}")
             except Exception as exc:

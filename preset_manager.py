@@ -17,8 +17,8 @@ SYSTEM_PRESETS: list[dict[str, Any]] = [
         "system": True,
         "description": "標準。Dynamicの基本となる上下動。",
         "values": {
-            "width": 720, "height": 280, "fps": 30, "bars": 24,
-            "background_color": "#000000", "bar_color": "#FFFFFF",
+            "width": 720, "height": 280, "fps": 30, "bars": 24, "display_mode": "片側バー", "scroll_mode": "なし", "scroll_step_frames": 2,
+            "background_color": "#000000", "bar_color": "#FFFFFF", "bar_color2": "#FFFFFF", "color_mode": "縦グラデーション",
             "bar_width_percent": 62, "corner_radius": 18,
             "max_height_percent": 78, "side_margin_percent": 5, "bottom_margin_percent": 8,
             "freq_min": 80.0, "freq_max": 12000.0,
@@ -42,8 +42,8 @@ SYSTEM_PRESETS: list[dict[str, Any]] = [
         "system": True,
         "description": "上下動を強めた設定。ピークからより下まで戻りやすい。",
         "values": {
-            "width": 720, "height": 280, "fps": 30, "bars": 24,
-            "background_color": "#000000", "bar_color": "#FFFFFF",
+            "width": 720, "height": 280, "fps": 30, "bars": 24, "display_mode": "片側バー", "scroll_mode": "なし", "scroll_step_frames": 2,
+            "background_color": "#000000", "bar_color": "#FFFFFF", "bar_color2": "#FFFFFF", "color_mode": "縦グラデーション",
             "bar_width_percent": 62, "corner_radius": 18,
             "max_height_percent": 80, "side_margin_percent": 5, "bottom_margin_percent": 8,
             "freq_min": 80.0, "freq_max": 12000.0,
@@ -67,8 +67,8 @@ SYSTEM_PRESETS: list[dict[str, Any]] = [
         "system": True,
         "description": "長尺動画向け。動きを少し落ち着かせた設定。",
         "values": {
-            "width": 720, "height": 280, "fps": 30, "bars": 24,
-            "background_color": "#000000", "bar_color": "#FFFFFF",
+            "width": 720, "height": 280, "fps": 30, "bars": 24, "display_mode": "片側バー", "scroll_mode": "なし", "scroll_step_frames": 2,
+            "background_color": "#000000", "bar_color": "#FFFFFF", "bar_color2": "#FFFFFF", "color_mode": "縦グラデーション",
             "bar_width_percent": 62, "corner_radius": 18,
             "max_height_percent": 76, "side_margin_percent": 5, "bottom_margin_percent": 8,
             "freq_min": 80.0, "freq_max": 12000.0,
