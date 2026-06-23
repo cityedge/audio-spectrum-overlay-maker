@@ -318,9 +318,10 @@ def build_default_output_path(input_path: Path, output_dir: Path, style: RenderS
     output_dir = Path(output_dir)
     bw = int(round(style.bar_width_scale * 100))
     base = f"{input_path.stem}_spectrum_{style.width}x{style.height}_{style.bars}bars_bw{bw}_r{style.corner_radius}"
+    if bool(getattr(style, "digital_enabled", False)):
+        base += f"_digital{int(style.digital_segments)}g{int(style.digital_gap_px)}"
     if preview:
         dur = int(round(float(duration or 0)))
         st = int(round(float(start or 0)))
         base += f"_preview_s{st}_d{dur}"
     return output_dir / f"{base}.mp4"
-

@@ -1,4 +1,4 @@
-# Audio Spectrum Overlay Maker v1.1.2 (setup fix)
+# Audio Spectrum Overlay Maker v1.2.0
 
 Audio Spectrum Overlay Maker is a local Python/Tkinter application for generating silent MP4 spectrum-analyzer overlay videos from audio files. It is designed for music videos, album artwork videos, lyric videos, and long-form YouTube workflows.
 
@@ -8,13 +8,15 @@ Audio Spectrum Overlay Maker は、音源ファイルを解析して、音に反
 
 - Generate silent MP4 spectrum overlay videos from WAV / MP3 / M4A / FLAC and other ffmpeg-readable audio files.
 - Single-sided and dual-sided horizontal bar spectrum display.
+- Optional digital/LED-style segmented bar rendering with configurable segment count and pixel gap.
 - Integer band-rotation scrolling for a clear moving-spectrum feel.
-- Two-color vertical gradient and band gradient modes.
+- Two-color vertical gradient, band gradient, and loop band gradient modes.
 - In-app still preview and actual-audio motion preview.
 - 30-second preview render and full-length render.
 - Optional pair output for video editors:
   - Main video: normal spectrum material.
   - Matte video: white background + black spectrum shape for Compare/Darken compositing.
+- Optional external handoff button for SRT Spectrum Video Composer. It passes only the audio file, main spectrum video, and matte video through a temporary JSON file; missing paths are left blank.
 - No-overwrite output naming, including paired main/matte filenames.
 - System presets and user presets.
 - Japanese / English UI.
@@ -66,6 +68,22 @@ py -3 app.py
 6. Generate the full video.
 7. For cleaner compositing, enable `比較合成用マットも出力` / `Also output matte pair` before rendering.
 
+## Digital / LED-style bars
+
+`Digital Segments` turns each bar into on/off vertical segments. Each segment is either visible or hidden; segments are never partially filled. `Segments` controls the number of divisions per bar, and `Gap px` controls the pixel gap between them. This is a drawing style only, so it works with single-sided bars, dual-sided bars, scrolling, gradients, and matte pair output.
+
+## SRT Spectrum Video Composer handoff
+
+If `final_composer.py` is placed next to `app.py` or the packaged EXE, the `SRT Spectrum Video Composer を開く` button opens it in a separate process. Audio Spectrum Overlay Maker does not import `final_composer.py` during normal startup. The button can be pressed before files are selected or rendered; missing file paths are written as blank values in the handoff JSON.
+
+The handoff contains only these fields:
+
+- source audio file
+- generated main spectrum video
+- generated matte video
+
+Background image, SRT file, output MP4 path, layout, and other composer-side settings are selected in SRT Spectrum Video Composer.
+
 ## Output naming
 
 Normal output:
@@ -91,6 +109,7 @@ song_spectrum_720x280_24bars_bw62_r18 (1)_matte_dark.mp4
 ## Files
 
 - `app.py` — GUI application.
+- `final_composer.py` — SRT Spectrum Video Composer application launched by the handoff button.
 - `spectrum_engine.py` — compatibility facade for engine APIs.
 - `spectrum_types.py` — shared dataclasses and version.
 - `spectrum_audio.py` — ffmpeg/ffprobe and audio decoding.
@@ -105,6 +124,7 @@ song_spectrum_720x280_24bars_bw62_r18 (1)_matte_dark.mp4
 - `preset_manager.py` — system/user presets.
 - `ui_tooltips.py` — tooltip helper.
 - `USER_GUIDE.md` — operation guide.
+- `USER_MANUAL_SSVC.md` — SRT Spectrum Video Composer user manual.
 - `CHANGELOG.md` — version history.
 - `DEVELOPMENT_NOTES.md` — architecture notes.
 - `TEST_REPORT.md` — release test notes.

@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from spectrum_types import EncodeSettings, LogFn, RenderStyle, TransformSettings
-from spectrum_utils import log, resolve_external_tool
+from spectrum_utils import log, no_window_subprocess_kwargs, resolve_external_tool
 from spectrum_draw import draw_spectrum_frame, compute_band_color_offset
 
 def open_ffmpeg_encoder(output_path: Path, width: int, height: int, fps: int, encode: EncodeSettings) -> subprocess.Popen:
@@ -28,7 +28,7 @@ def open_ffmpeg_encoder(output_path: Path, width: int, height: int, fps: int, en
     elif "nvenc" in encode.encoder:
         cmd += ["-preset", "p4", "-cq", str(encode.crf)]
     cmd += ["-pix_fmt", "yuv420p", "-movflags", "+faststart", str(output_path)]
-    return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE, **no_window_subprocess_kwargs())
 
 def render_video(bar_values: np.ndarray, output_path: Path, style: RenderStyle, encode: EncodeSettings, log_callback: LogFn = None, transform: TransformSettings | None = None) -> None:
     frame_count, bars = bar_values.shape
@@ -59,4 +59,3 @@ def render_video(bar_values: np.ndarray, output_path: Path, style: RenderStyle, 
     return_code = proc.wait()
     if return_code != 0:
         raise RuntimeError("Video encoding failed with ffmpeg.\n" + stderr)
-

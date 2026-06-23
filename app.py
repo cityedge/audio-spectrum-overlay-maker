@@ -1,13 +1,72 @@
 # -*- coding: utf-8 -*-
-"""Audio Spectrum Overlay Maker v1.1.1 GUI."""
+"""Audio Spectrum Overlay Maker v1.2.0 GUI."""
 from __future__ import annotations
 
+import importlib.util
+import json
 import os
 import queue
+import subprocess
+import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any
+
+COMPOSER_MODE_ARG = "--srt-spectrum-video-composer"
+COMPOSER_HANDOFF_ARG = "--handoff"
+COMPOSER_HANDOFF_TYPE = "audio_spectrum_overlay_maker_to_srt_spectrum_video_composer"
+COMPOSER_SCRIPT_NAME = "final_composer.py"
+
+
+def _runtime_app_dir_early() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def _show_startup_error(title: str, message: str) -> None:
+    try:
+        from tkinter import messagebox
+        messagebox.showerror(title, message)
+    except Exception:
+        print(f"{title}: {message}", file=sys.stderr)
+
+
+def _run_composer_mode_if_requested() -> None:
+    if COMPOSER_MODE_ARG not in sys.argv:
+        return
+    app_dir = _runtime_app_dir_early()
+    composer_path = app_dir / COMPOSER_SCRIPT_NAME
+    if not composer_path.is_file():
+        _show_startup_error(
+            "SRT Spectrum Video Composer",
+            f"{COMPOSER_SCRIPT_NAME} was not found.\n{composer_path}",
+        )
+        raise SystemExit(1)
+    try:
+        if str(app_dir) not in sys.path:
+            sys.path.insert(0, str(app_dir))
+        spec = importlib.util.spec_from_file_location("final_composer", composer_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"Could not load {composer_path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["final_composer"] = module
+        spec.loader.exec_module(module)
+        composer_main = getattr(module, "main", None)
+        if not callable(composer_main):
+            raise RuntimeError(f"{COMPOSER_SCRIPT_NAME} does not define main().")
+        composer_main(sys.argv[1:])
+    except SystemExit:
+        raise
+    except Exception as exc:
+        _show_startup_error("SRT Spectrum Video Composer", str(exc))
+        raise SystemExit(1) from exc
+    raise SystemExit(0)
+
+
+_run_composer_mode_if_requested()
 
 import numpy as np
 import tkinter as tk
@@ -28,6 +87,7 @@ from spectrum_engine import (
     TransformSettings,
     analyze_preview_segment,
     build_default_output_path,
+    build_matte_output_path,
     color_to_hex,
     compute_band_color_offset,
     draw_spectrum_frame,
@@ -37,11 +97,72 @@ from spectrum_engine import (
     still_preview_values,
     suggest_frequency_range,
 )
+from spectrum_utils import no_window_subprocess_kwargs, runtime_app_dir
 from ui_tooltips import ToolTip
 
 APP_TITLE = f"Audio Spectrum Overlay Maker {VERSION}"
 APP_DIR = Path(__file__).resolve().parent
 USER_PRESETS_FILE = APP_DIR / "presets_user.json"
+
+
+def _handoff_base_dir() -> Path:
+    base = os.environ.get("LOCALAPPDATA")
+    if base:
+        return Path(base)
+    return Path.home()
+
+
+def _json_path_text(path: Path | str | None) -> str:
+    if path is None:
+        return ""
+    text = str(path).strip()
+    if not text:
+        return ""
+    candidate = Path(text).expanduser()
+    if not candidate.is_file():
+        return ""
+    return str(candidate.resolve()).replace("\\", "/")
+
+
+def create_composer_handoff(
+    audio_path: Path | str | None,
+    spectrum_color_path: Path | str | None,
+    spectrum_mask_path: Path | str | None,
+) -> Path:
+    handoff_dir = _handoff_base_dir() / "AudioSpectrumOverlayMaker" / "handoff"
+    handoff_dir.mkdir(parents=True, exist_ok=True)
+    handoff_path = handoff_dir / f"handoff-{uuid.uuid4()}.json"
+    tmp_path = handoff_path.with_suffix(handoff_path.suffix + ".tmp")
+    payload = {
+        "schema_version": 1,
+        "handoff_type": COMPOSER_HANDOFF_TYPE,
+        "created_by": "Audio Spectrum Overlay Maker",
+        "files": {
+            "audio": _json_path_text(audio_path),
+            "spectrum_color": _json_path_text(spectrum_color_path),
+            "spectrum_mask": _json_path_text(spectrum_mask_path),
+        },
+    }
+    tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_path.replace(handoff_path)
+    return handoff_path
+
+
+def composer_self_launch_command(handoff_path: Path) -> list[str]:
+    if getattr(sys, "frozen", False):
+        return [
+            sys.executable,
+            COMPOSER_MODE_ARG,
+            COMPOSER_HANDOFF_ARG,
+            str(handoff_path),
+        ]
+    return [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        COMPOSER_MODE_ARG,
+        COMPOSER_HANDOFF_ARG,
+        str(handoff_path),
+    ]
 
 TOOLTIPS: dict[str, str] = {
     "input_file": "解析するWAV / MP3 / M4Aなどの音源ファイルです。出力動画には音声は入りません。",
@@ -72,9 +193,12 @@ TOOLTIPS: dict[str, str] = {
     "background_color": "通常は黒のまま使います。ペア出力ではマット側は自動的に白背景になります。特殊用途や検証用の詳細設定です。",
     "bar_color": "バーの基準色です。オーバーレイ素材としては白系が最も扱いやすいです。縦グラデーションでは中央/下側、帯域グラデーションでは低域側の色になります。",
     "bar_color2": "バーの第2色です。2色を同じにすると単色になります。色付き素材はブレンド/クロマキー合成で扱いが難しくなる場合があります。",
-    "color_mode": "色の付け方です。基本は白-白のまま使うのが安全です。帯域グラデーションは、スクロール時に色も一緒に回転します。",
+    "color_mode": "色の付け方です。基本は白-白のまま使うのが安全です。帯域グラデーションは左から右へ色が変わります。ループ帯域グラデーションは両端が同じ色になり、スクロール時につながりやすくなります。",
     "bar_width_percent": "各バーの太さです。値を下げるとバーの中心位置はそのままで、バーだけが細くなり、バー間隔が広がります。",
     "corner_radius": "バーの角丸半径です。大きくするとカプセル形状に近づきます。",
+    "digital_enabled": "バーを指定数のセグメントに分け、点灯/消灯だけで表示します。セグメントの途中まで塗られる状態はありません。",
+    "digital_segments": "1本のバーを縦方向に何分割するかを指定します。値を増やすほど細かいLEDメーター風になります。",
+    "digital_gap_px": "セグメント同士の間に入れる縦方向の隙間です。0にすると隙間なしで段階表示します。",
     "max_height_percent": "バーが使う最大高さです。値を上げるとピーク時のバーが高くなります。",
     "side_margin_percent": "左右の余白です。値を上げると全体が中央寄りに狭くなります。",
     "bottom_margin_percent": "下端からバーの基準線までの余白です。値を上げるとバー全体が少し上に移動します。",
@@ -139,9 +263,12 @@ TOOLTIPS_EN: dict[str, str] = {
     "background_color": "Usually keep this black. Pair-output matte videos automatically use a white background. This is an advanced/special-use setting.",
     "bar_color": "Primary bar color. White is safest for overlay compositing. In vertical gradient mode this is the inner/base color; in band gradient mode this is the low-band color.",
     "bar_color2": "Second bar color. If both colors are the same, the result is effectively solid-color. Colored overlays may be harder to composite with blend modes or chroma key.",
-    "color_mode": "Color behavior. White-to-white is safest for overlay use. Band gradient rotates together with integer scroll.",
+    "color_mode": "Color behavior. Band gradient runs left to right. Loop band gradient keeps both edges at the same color for smoother scrolling wraps.",
     "bar_width_percent": "Bar width. Lower values make each bar thinner and gaps wider.",
     "corner_radius": "Rounded corner radius. Higher values make capsule-like bars.",
+    "digital_enabled": "Split bars into on/off segments. Segments are never partially filled.",
+    "digital_segments": "Number of vertical segments per bar.",
+    "digital_gap_px": "Pixel gap between digital segments. Use 0 for no gap.",
     "max_height_percent": "Maximum bar height.",
     "side_margin_percent": "Left/right margin.",
     "bottom_margin_percent": "Bottom margin.",
@@ -211,6 +338,9 @@ UI_TEXT = {
         "bar_color2": "バー色2",
         "bar_width_percent": "バー幅%",
         "corner_radius": "角丸半径px",
+        "digital_enabled": "デジタル化",
+        "digital_segments": "分割数",
+        "digital_gap_px": "ギャップpx",
         "max_height_percent": "最大高さ%",
         "side_margin_percent": "左右余白%",
         "bottom_margin_percent": "下余白%",
@@ -279,6 +409,9 @@ UI_TEXT = {
         "bar_color2": "Bar Color 2",
         "bar_width_percent": "Bar Width %",
         "corner_radius": "Corner Radius px",
+        "digital_enabled": "Digital Segments",
+        "digital_segments": "Segments",
+        "digital_gap_px": "Gap px",
         "max_height_percent": "Max Height %",
         "side_margin_percent": "Side Margin %",
         "bottom_margin_percent": "Bottom Margin %",
@@ -321,6 +454,21 @@ UI_TEXT = {
     }
 }
 
+TOOLTIPS["open_composer"] = (
+    "音源・直近に生成したスペアナ動画・マット動画を渡して、"
+    "SRT Spectrum Video Composer を別プロセスで開きます。未生成の項目は空欄で渡します。"
+)
+TOOLTIPS_EN["open_composer"] = (
+    "Open SRT Spectrum Video Composer in a separate process, passing only the "
+    "current audio file, spectrum video, and matte video. Missing items are passed as blank values."
+)
+for _ui_lang, _texts in UI_TEXT.items():
+    _texts["open_composer"] = (
+        "Open SRT Spectrum Video Composer"
+        if _ui_lang == "English"
+        else "SRT Spectrum Video Composer を開く"
+    )
+
 CHOICE_OPTIONS = {
     "scroll_mode": {
         "日本語": ["なし", "左", "右"],
@@ -331,8 +479,8 @@ CHOICE_OPTIONS = {
         "English": ["Single-sided bar", "Dual-sided bar"],
     },
     "color_mode": {
-        "日本語": ["縦グラデーション", "帯域グラデーション"],
-        "English": ["Vertical Gradient", "Band Gradient"],
+        "日本語": ["縦グラデーション", "帯域グラデーション", "ループ帯域グラデーション"],
+        "English": ["Vertical Gradient", "Band Gradient", "Loop Band Gradient"],
     },
     "response_speed": {
         "日本語": ["ゆったり", "標準", "速い", "カスタム"],
@@ -427,12 +575,14 @@ class App(tk.Tk):
         self.motion_thread: threading.Thread | None = None
         self.preview_base_height = 220
         self.preview_resize_after_id: str | None = None
+        self.last_spectrum_video_path: Path | None = None
+        self.last_spectrum_mask_path: Path | None = None
 
         self._init_style()
         self._init_vars()
         self._build_ui()
         self._wire_traces()
-        self.apply_preset("01 Dynamic Standard")
+        self.apply_preset("01 Basic White")
         self.after(100, self._process_log_queue)
 
     def _init_style(self) -> None:
@@ -470,6 +620,9 @@ class App(tk.Tk):
             "bar_color2": tk.StringVar(value="#FFFFFF"),
             "bar_width_percent": tk.IntVar(value=62),
             "corner_radius": tk.IntVar(value=18),
+            "digital_enabled": tk.BooleanVar(value=False),
+            "digital_segments": tk.IntVar(value=16),
+            "digital_gap_px": tk.IntVar(value=2),
             "max_height_percent": tk.IntVar(value=78),
             "side_margin_percent": tk.IntVar(value=5),
             "bottom_margin_percent": tk.IntVar(value=8),
@@ -488,7 +641,7 @@ class App(tk.Tk):
             "preview_start": tk.DoubleVar(value=0.0),
             "motion_preview_duration": tk.DoubleVar(value=10.0),
             "preview_duration": tk.DoubleVar(value=30.0),
-            "pair_output": tk.BooleanVar(value=False),
+            "pair_output": tk.BooleanVar(value=True),
             "warmup": tk.DoubleVar(value=5.0),
             "sample_rate": tk.IntVar(value=24000),
             "fft_size": tk.IntVar(value=1024),
@@ -755,9 +908,13 @@ class App(tk.Tk):
         self.register_text(self.pair_output_check, "pair_output")
         self.add_tooltip(self.pair_output_check, "pair_output")
         open_btn = ttk.Button(actions, text=self.ui("open_output"), command=self.open_output_folder)
-        open_btn.pack(side="right")
+        open_btn.pack(side="left", padx=(10, 0))
         self.register_text(open_btn, "open_output")
         self.add_tooltip(open_btn, "open_output")
+        self.open_composer_button = ttk.Button(actions, text=self.ui("open_composer"), command=self.open_srt_spectrum_video_composer)
+        self.open_composer_button.pack(side="right")
+        self.register_text(self.open_composer_button, "open_composer")
+        self.add_tooltip(self.open_composer_button, "open_composer")
         self.log_text = ScrolledText(bottom, height=4, wrap="word", font=("Consolas", 9))
         self.log_text.grid(row=1, column=0, sticky="ew", pady=(8, 0))
         self.log_text.configure(state="disabled")
@@ -774,6 +931,9 @@ class App(tk.Tk):
         self._color_row(tab, row, "バー色2", "bar_color2"); row += 1
         self._scale(tab, row, "バー幅%", "bar_width_percent", 10, 100); row += 1
         self._spin(tab, row, "角丸半径px", "corner_radius", 0, 160, 1); row += 1
+        self._check(tab, row, "デジタル化", "digital_enabled"); row += 1
+        self._spin(tab, row, "分割数", "digital_segments", 1, 64, 1); row += 1
+        self._spin(tab, row, "ギャップpx", "digital_gap_px", 0, 64, 1); row += 1
         self._scale(tab, row, "最大高さ%", "max_height_percent", 10, 95); row += 1
         self._scale(tab, row, "左右余白%", "side_margin_percent", 0, 30); row += 1
         self._scale(tab, row, "下余白%", "bottom_margin_percent", 0, 30); row += 1
@@ -956,7 +1116,7 @@ class App(tk.Tk):
             if str(self.choice_to_ja(key, self.vars[key].get())) != "カスタム":
                 self.recompute_advanced_from_qualitative()
 
-        if key in {"width", "height", "bars", "display_mode", "color_mode", "background_color", "bar_color", "bar_color2", "bar_width_percent", "corner_radius", "max_height_percent", "side_margin_percent", "bottom_margin_percent", "gamma", "scroll_mode", "scroll_step_frames"}:
+        if key in {"width", "height", "bars", "display_mode", "color_mode", "background_color", "bar_color", "bar_color2", "bar_width_percent", "corner_radius", "digital_enabled", "digital_segments", "digital_gap_px", "max_height_percent", "side_margin_percent", "bottom_margin_percent", "gamma", "scroll_mode", "scroll_step_frames"}:
             if key == "bars" and not bool(self.vars["advanced_custom"].get()):
                 self.recompute_advanced_from_qualitative()
             self.after_idle(self.update_still_preview)
@@ -1152,6 +1312,9 @@ class App(tk.Tk):
             values.setdefault("display_mode", "片側バー")
             values.setdefault("color_mode", "縦グラデーション")
             values.setdefault("bar_color2", values.get("bar_color", "#FFFFFF"))
+            values.setdefault("digital_enabled", False)
+            values.setdefault("digital_segments", 16)
+            values.setdefault("digital_gap_px", 2)
             values.setdefault("scroll_mode", "なし")
             values.setdefault("scroll_step_frames", 2)
             values.setdefault("frequency_mode", "自動")
@@ -1226,7 +1389,7 @@ class App(tk.Tk):
         try:
             self.preset_manager.delete_user_preset(name)
             self.update_preset_combo_values()
-            self.apply_preset("01 Dynamic Standard")
+            self.apply_preset("01 Basic White")
             self.log(f"プリセットを削除しました: {name}")
         except Exception as exc:
             messagebox.showerror("削除エラー", str(exc))
@@ -1241,12 +1404,19 @@ class App(tk.Tk):
             background_color=parse_color(self.vars["background_color"].get(), (0, 0, 0)),
             bar_color=parse_color(self.vars["bar_color"].get(), (255, 255, 255)),
             bar_color2=parse_color(self.vars["bar_color2"].get(), (255, 255, 255)),
-            color_mode=("band" if self.choice_to_ja("color_mode", self.vars["color_mode"].get()) == "帯域グラデーション" else "vertical"),
+            color_mode=(
+                "loop_band"
+                if self.choice_to_ja("color_mode", self.vars["color_mode"].get()) == "ループ帯域グラデーション"
+                else ("band" if self.choice_to_ja("color_mode", self.vars["color_mode"].get()) == "帯域グラデーション" else "vertical")
+            ),
             max_height_ratio=float(self.vars["max_height_percent"].get()) / 100.0,
             bottom_margin_ratio=float(self.vars["bottom_margin_percent"].get()) / 100.0,
             side_margin_ratio=float(self.vars["side_margin_percent"].get()) / 100.0,
             bar_width_scale=float(self.vars["bar_width_percent"].get()) / 100.0,
             corner_radius=int(self.vars["corner_radius"].get()),
+            digital_enabled=bool(self.vars["digital_enabled"].get()),
+            digital_segments=int(self.vars["digital_segments"].get()),
+            digital_gap_px=int(self.vars["digital_gap_px"].get()),
             gamma=float(self.vars["gamma"].get()),
         )
 
@@ -1620,6 +1790,7 @@ class App(tk.Tk):
         def worker() -> None:
             nonlocal start, output_path
             try:
+                write_matte = bool(self.vars["pair_output"].get())
                 scan_seconds = float(self.vars["scan_seconds"].get())
                 self.resolve_frequency_range_for_run(input_path, motion, scan_seconds)
                 # Preview MP4 is always from the head of the track.
@@ -1637,8 +1808,11 @@ class App(tk.Tk):
                     duration=duration,
                     warmup=warmup,
                     log_callback=self.log_from_thread,
-                    write_matte=bool(self.vars["pair_output"].get()),
+                    write_matte=write_matte,
                 )
+                actual_path = Path(actual)
+                self.last_spectrum_video_path = actual_path
+                self.last_spectrum_mask_path = build_matte_output_path(actual_path) if write_matte else None
                 self.log_from_thread(f"Saved to: {actual}")
             except Exception as exc:
                 self.log_from_thread("ERROR: " + str(exc))
@@ -1653,6 +1827,31 @@ class App(tk.Tk):
         self.preview_button.configure(state="normal")
         self.full_button.configure(state="normal")
         self.motion_button.configure(state="normal")
+
+    def open_srt_spectrum_video_composer(self) -> None:
+        audio_text = self.vars["input_file"].get().strip()
+        audio_path = Path(audio_text) if audio_text else None
+        spectrum_path = self.last_spectrum_video_path
+        mask_path = self.last_spectrum_mask_path
+        composer_path = runtime_app_dir() / COMPOSER_SCRIPT_NAME
+        if not composer_path.is_file():
+            messagebox.showerror(
+                "SRT Spectrum Video Composer",
+                f"{COMPOSER_SCRIPT_NAME} was not found.\n{composer_path}",
+            )
+            return
+        try:
+            handoff_path = create_composer_handoff(audio_path, spectrum_path, mask_path)
+            command = composer_self_launch_command(handoff_path)
+            subprocess.Popen(
+                command,
+                cwd=str(runtime_app_dir()),
+                shell=False,
+                **no_window_subprocess_kwargs(),
+            )
+            self.log(f"Opened SRT Spectrum Video Composer: {handoff_path}")
+        except Exception as exc:
+            messagebox.showerror("SRT Spectrum Video Composer", str(exc))
 
     def log_from_thread(self, message: str) -> None:
         self.log_queue.put(message)

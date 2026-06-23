@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.2.0
+
+- Added optional digital/LED-style segmented bar rendering.
+- Digital bars use on/off vertical segments only, with configurable segment count and pixel gap.
+- Digital rendering works through the existing drawing layer, so single-sided/dual-sided display, scrolling, gradients, preview, main output, and matte output share the same analyzed bar values.
+- Replaced the early motion-oriented system presets with 10 visual showcase presets covering basic white overlays, dual bars, gradients, scrolling, digital/LED styles, and subtle lower-third use.
+- Digital showcase presets use 32 visible bars with 16 digital segments per bar.
+- Added loop band gradient mode, where both horizontal edges use color 1 and the center uses color 2 for smoother wrapped scrolling.
+- Updated the scrolling showcase presets to use loop band gradient.
+- Added an optional external handoff button for SRT Spectrum Video Composer. The app writes a UUID handoff JSON with only audio, spectrum video, and matte video paths, then starts itself in composer-launch mode so `final_composer.py` is imported only in the child process.
+- Composer handoff can now be opened even before audio or spectrum files are available; missing handoff values are passed as blank strings.
+- Changed the matte-pair output option to default ON.
+- Swapped the lower action button positions so `Open Output Folder` sits near render controls and the composer button sits on the right.
+- Included `final_composer.py` and `USER_MANUAL_SSVC.md` in the package so SRT Spectrum Video Composer is available out of the box.
+
 ## v1.1.2 (setup fix)
 
 - Updated `setup.bat` display version.

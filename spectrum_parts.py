@@ -129,6 +129,22 @@ class BarSpectrumPart:
         t = 0.0 if bars <= 1 else float(idx) / float(max(1, bars - 1))
         return _lerp_color(style.bar_color, style.bar_color2, t)
 
+    def _loop_band_color(self, index: int) -> RGB:
+        style = self.style
+        bars = max(1, int(style.bars))
+        idx = (int(index) + int(self.band_color_offset)) % bars
+        if bars <= 1:
+            t = 0.0
+        else:
+            x = float(idx) / float(max(1, bars - 1))
+            t = 1.0 - abs(x * 2.0 - 1.0)
+        return _lerp_color(style.bar_color, style.bar_color2, t)
+
+    def _horizontal_band_color(self, index: int, color_mode: str) -> RGB:
+        if color_mode == 'loop_band':
+            return self._loop_band_color(index)
+        return self._band_color(index)
+
     def _primitive(self, x0: int, x1: int, y0: int, y1: int, kind: str | None = None, color: RGB | None = None, color2: RGB | None = None) -> Primitive:
         style = self.style
         if kind is None:
@@ -142,6 +158,62 @@ class BarSpectrumPart:
             z_index=0,
         )
 
+    def _digital_layout(self, max_height: int) -> tuple[int, int, int]:
+        """Return drawable segment count, segment height, and gap pixels."""
+        max_height = max(1, int(max_height))
+        requested_count = max(1, int(getattr(self.style, "digital_segments", 16) or 16))
+        gap = max(0, int(getattr(self.style, "digital_gap_px", 2) or 0))
+        count = min(requested_count, max_height)
+        if count <= 1:
+            return 1, max_height, 0
+        gap = min(gap, max(0, (max_height - count) // (count - 1)))
+        segment_h = max(1, (max_height - gap * (count - 1)) // count)
+        return count, segment_h, gap
+
+    def _digital_color(self, band_index: int, segment_index: int, segment_count: int, color_mode: str) -> RGB:
+        if color_mode in {'band', 'loop_band'}:
+            return self._horizontal_band_color(band_index, color_mode)
+        if segment_count <= 1:
+            t = 1.0
+        else:
+            t = float(segment_index) / float(max(1, segment_count - 1))
+        return _lerp_color(self.style.bar_color, self.style.bar_color2, t)
+
+    def _append_digital_segments(
+        self,
+        primitives: list[Primitive],
+        *,
+        band_index: int,
+        x0: int,
+        x1: int,
+        base_y: int,
+        max_height: int,
+        value: float,
+        direction: int,
+        frame_top: int,
+        frame_bottom: int,
+        color_mode: str,
+    ) -> None:
+        count, segment_h, gap = self._digital_layout(max_height)
+        lit = int(round(float(np.clip(value, 0.0, 1.0)) * count))
+        lit = max(0, min(count, lit))
+        if lit <= 0:
+            return
+        kind = "rounded_rect" if gap > 0 and int(self.style.corner_radius) > 0 else "rect"
+        for s in range(lit):
+            if direction < 0:
+                y1 = int(base_y) - s * (segment_h + gap)
+                y0 = y1 - segment_h
+            else:
+                y0 = int(base_y) + s * (segment_h + gap)
+                y1 = y0 + segment_h
+            y0 = max(frame_top, y0)
+            y1 = min(frame_bottom, y1)
+            if y1 <= y0:
+                continue
+            color = self._digital_color(band_index, s, count, color_mode)
+            primitives.append(self._primitive(x0, x1, y0, y1, kind=kind, color=color, color2=None))
+
     def primitives_for_values(self, values: np.ndarray) -> list[Primitive]:
         layout = self.build_layout()
         vals = np.asarray(values, dtype=np.float32)
@@ -150,6 +222,7 @@ class BarSpectrumPart:
         frame_top = int(self.origin_y)
         frame_bottom = int(self.origin_y + int(style.height))
         color_mode = str(getattr(style, 'color_mode', 'vertical') or 'vertical')
+        digital_enabled = bool(getattr(style, "digital_enabled", False))
 
         for b, value in enumerate(vals[:int(style.bars)]):
             v = float(np.clip(value, 0.0, 1.0))
@@ -160,11 +233,56 @@ class BarSpectrumPart:
                 continue
 
             x0, x1 = layout.positions[b]
+            if digital_enabled:
+                if layout.mode == "dual":
+                    center = int(layout.base_y)
+                    self._append_digital_segments(
+                        primitives,
+                        band_index=b,
+                        x0=x0,
+                        x1=x1,
+                        base_y=center,
+                        max_height=layout.max_height,
+                        value=v,
+                        direction=-1,
+                        frame_top=frame_top,
+                        frame_bottom=frame_bottom,
+                        color_mode=color_mode,
+                    )
+                    self._append_digital_segments(
+                        primitives,
+                        band_index=b,
+                        x0=x0,
+                        x1=x1,
+                        base_y=center,
+                        max_height=layout.max_height,
+                        value=v,
+                        direction=1,
+                        frame_top=frame_top,
+                        frame_bottom=frame_bottom,
+                        color_mode=color_mode,
+                    )
+                else:
+                    self._append_digital_segments(
+                        primitives,
+                        band_index=b,
+                        x0=x0,
+                        x1=x1,
+                        base_y=int(layout.base_y),
+                        max_height=layout.max_height,
+                        value=v,
+                        direction=-1,
+                        frame_top=frame_top,
+                        frame_bottom=frame_bottom,
+                        color_mode=color_mode,
+                    )
+                continue
+
             if layout.mode != "dual":
                 x0, x1 = self._effective_x_span(x0, x1, h)
 
-            if color_mode == 'band':
-                solid = self._band_color(b)
+            if color_mode in {'band', 'loop_band'}:
+                solid = self._horizontal_band_color(b, color_mode)
                 top_outer = solid
                 bottom_inner = None
                 bottom_outer = solid

@@ -1,14 +1,13 @@
-# v1.1.1 Test Report
+# v1.2.0 Test Report
 
 ## Automated checks
 
-- Python compile check: passed for all Python files
+- Python compile check: passed for all Python files, including bundled `final_composer.py`
 - spectrum_engine import: passed
-- VERSION: 1.1.1
-- runtime_app_dir() source-mode check: passed
-- app-side bin lookup check: passed
-- resolve_external_tool("ffmpeg") prefers local bin folder: passed
-- PATH fallback after local bin removal: passed
+- VERSION: 1.2.0
+- Composer handoff JSON blank-value behavior: passed
+- Bundled file check: `final_composer.py` and `USER_MANUAL_SSVC.md` included
+- Package zip check: no `__pycache__` entries
 
 ## ffmpeg / ffprobe lookup order
 

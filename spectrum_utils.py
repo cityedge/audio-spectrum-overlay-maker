@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import os
 import shutil
+import subprocess
 import sys
 
 import numpy as np
@@ -57,6 +58,17 @@ def resolve_external_tool(name: str) -> str:
     found = find_external_tool(name)
     return str(found) if found is not None else str(name)
 
+def no_window_subprocess_kwargs() -> dict[str, int]:
+    """Return subprocess kwargs that suppress console windows on Windows.
+
+    PyInstaller --windowed builds can otherwise flash a black console window
+    whenever ffmpeg/ffprobe is started.  Non-Windows platforms keep the default
+    subprocess behavior by receiving no extra keyword arguments.
+    """
+    if os.name == "nt":
+        return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+    return {}
+
 
 def log(message: str, callback: LogFn = None) -> None:
     if callback:
@@ -90,4 +102,3 @@ def unique_path(path: Path) -> Path:
         if not candidate.exists():
             return candidate
     raise RuntimeError(f"Could not create a unique filename for: {path}")
-

@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 
 from spectrum_types import LogFn
-from spectrum_utils import find_external_tool, log, resolve_external_tool
+from spectrum_utils import find_external_tool, log, no_window_subprocess_kwargs, resolve_external_tool
 
 def check_environment() -> tuple[bool, str]:
     missing = []
@@ -38,7 +38,7 @@ def run_ffprobe_duration(path: Path) -> float | None:
         str(path),
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=True, **no_window_subprocess_kwargs())
         value = proc.stdout.strip()
         if not value:
             return None
@@ -61,7 +61,7 @@ def decode_audio_to_float32_mono(path: Path, sample_rate: int, start: float, dur
         "-f", "f32le", "-acodec", "pcm_f32le", "pipe:1",
     ]
     log("Loading audio...", log_callback)
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **no_window_subprocess_kwargs())
     if proc.returncode != 0:
         stderr = proc.stderr.decode("utf-8", errors="replace")
         raise RuntimeError("Failed to load audio with ffmpeg.\n" + stderr)
@@ -73,4 +73,3 @@ def decode_audio_to_float32_mono(path: Path, sample_rate: int, start: float, dur
     if audio.size == 0:
         raise RuntimeError("No audio samples were found.")
     return audio
-
