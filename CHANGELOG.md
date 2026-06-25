@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.3.0
+
+Stable release for the Post Transform and SRT Composer generation.
+
+- Added peak-hold rendering as a separate marker layer above the normal bar body.
+- Peak markers hold each bar's recent maximum for a configurable time, then decay downward until the current bar catches up.
+- Added peak-hold controls: enable/disable, hold milliseconds, decay milliseconds, normal-bar marker size percent, and digital marker segment count.
+- Changed the default peak-hold timing to 100ms hold / 300ms decay.
+- Peak markers work with single-sided bars, dual-sided bars, scrolling, vertical/band/loop-band gradients, digital segmented bars, GUI motion preview, main output, and matte output.
+- Peak markers now scroll together with their source bands when integer scrolling is enabled.
+- Added an explicit Post Transform layer after frame drawing and before encoding.
+- Post Transform supports static rotation, vertical trapezoid, horizontal trapezoid, combined trapezoid + rotation, and audio-reactive scaling.
+- Main and matte outputs use the same Post Transform, preserving canvas size; exposed areas are filled with the frame background color.
+- Added Visual-tab controls for rotation, vertical trapezoid, horizontal trapezoid, and audio-reactive scaling.
+- Added reset buttons for rotation and trapezoid controls.
+- Added audio-reactive scaling with explicit enable/disable checkbox, 80-150% target scale, hold/decay envelope, start threshold, ceiling, and low-band-only detection.
+- Added low-band reference range setting in the Advanced tab.
+- Added 2-second and 10-second in-app motion preview buttons.
+- Added automatic frequency range display next to the Auto/Manual frequency selector.
+- Render main and matte pair outputs in parallel when pair output is enabled.
+- Replaced `10 Minimal Lower Bar` with `10 Trapezoid Neon`, `11 Vertical Scroll`, and `12 Pulsating LED Scroll`.
+- Enabled peak hold for the more energetic and digital system presets while keeping basic and subtle presets quieter.
+- Fixed SRT Spectrum Video Composer lookup for PyInstaller builds by searching the PyInstaller extraction directory before falling back to the EXE/app directory.
+
+## v1.3-alpha1
+
+Internal alpha package before the v1.3.0 stabilization pass.
+
 ## v1.2.0
 
 - Added optional digital/LED-style segmented bar rendering.

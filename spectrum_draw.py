@@ -25,14 +25,14 @@ def build_layout(style: RenderStyle) -> Tuple[List[Tuple[int, int]], int, int]:
     layout = BarSpectrumPart(style).build_layout()
     return layout.positions, layout.base_y, layout.max_height
 
-def build_bar_scene(values: np.ndarray, style: RenderStyle, band_color_offset: int = 0) -> Scene:
+def build_bar_scene(values: np.ndarray, style: RenderStyle, band_color_offset: int = 0, peak_values: np.ndarray | None = None) -> Scene:
     canvas = CanvasSpec(width=int(style.width), height=int(style.height), background_color=style.background_color)
     scene = Scene(canvas=canvas)
-    scene.extend(BarSpectrumPart(style, band_color_offset=band_color_offset).primitives_for_values(values))
+    scene.extend(BarSpectrumPart(style, band_color_offset=band_color_offset).primitives_for_values(values, peak_values=peak_values))
     return scene
 
-def draw_spectrum_frame(values: np.ndarray, style: RenderStyle, band_color_offset: int = 0) -> np.ndarray:
-    scene = build_bar_scene(values, style, band_color_offset=band_color_offset)
+def draw_spectrum_frame(values: np.ndarray, style: RenderStyle, band_color_offset: int = 0, peak_values: np.ndarray | None = None) -> np.ndarray:
+    scene = build_bar_scene(values, style, band_color_offset=band_color_offset, peak_values=peak_values)
     frame = create_frame(scene.canvas.width, scene.canvas.height, scene.canvas.background_color)
     draw_primitives(frame, scene.primitives)
     return frame

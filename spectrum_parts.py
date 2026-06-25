@@ -145,7 +145,17 @@ class BarSpectrumPart:
             return self._loop_band_color(index)
         return self._band_color(index)
 
-    def _primitive(self, x0: int, x1: int, y0: int, y1: int, kind: str | None = None, color: RGB | None = None, color2: RGB | None = None) -> Primitive:
+    def _primitive(
+        self,
+        x0: int,
+        x1: int,
+        y0: int,
+        y1: int,
+        kind: str | None = None,
+        color: RGB | None = None,
+        color2: RGB | None = None,
+        z_index: int = 0,
+    ) -> Primitive:
         style = self.style
         if kind is None:
             kind = "rounded_rect" if int(style.corner_radius) > 0 else "rect"
@@ -155,7 +165,7 @@ class BarSpectrumPart:
             color=(style.bar_color if color is None else color),
             color2=color2,
             radius=int(style.corner_radius),
-            z_index=0,
+            z_index=int(z_index),
         )
 
     def _digital_layout(self, max_height: int) -> tuple[int, int, int]:
@@ -214,9 +224,112 @@ class BarSpectrumPart:
             color = self._digital_color(band_index, s, count, color_mode)
             primitives.append(self._primitive(x0, x1, y0, y1, kind=kind, color=color, color2=None))
 
-    def primitives_for_values(self, values: np.ndarray) -> list[Primitive]:
+    def _peak_piece_px(self, max_height: int) -> int:
+        pct = max(1.0, float(getattr(self.style, "peak_size_percent", 4) or 4))
+        return max(2, min(10, int(round(max(1, int(max_height)) * pct / 100.0))))
+
+    def _append_normal_peak(
+        self,
+        primitives: list[Primitive],
+        *,
+        band_index: int,
+        x0: int,
+        x1: int,
+        base_y: int,
+        max_height: int,
+        current_value: float,
+        peak_value: float,
+        direction: int,
+        frame_top: int,
+        frame_bottom: int,
+        color_mode: str,
+    ) -> None:
+        style = self.style
+        current = float(np.clip(current_value, 0.0, 1.0))
+        peak = float(np.clip(peak_value, 0.0, 1.0))
+        if peak <= current + 1e-5:
+            return
+        if style.gamma != 1.0:
+            current = current ** style.gamma
+            peak = peak ** style.gamma
+        current_h = int(round(current * max_height))
+        peak_h = int(round(peak * max_height))
+        if peak_h <= current_h:
+            return
+
+        piece = self._peak_piece_px(max_height)
+        if color_mode in {'band', 'loop_band'}:
+            color = self._horizontal_band_color(band_index, color_mode)
+        else:
+            color = style.bar_color2
+        kind = "rounded_rect" if int(style.corner_radius) > 0 else "rect"
+
+        if direction < 0:
+            peak_y = int(base_y) - peak_h
+            body_top = int(base_y) - current_h
+            y0 = max(frame_top, peak_y)
+            y1 = min(frame_bottom, body_top, peak_y + piece)
+        else:
+            peak_y = int(base_y) + peak_h
+            body_bottom = int(base_y) + current_h
+            y0 = max(frame_top, body_bottom, peak_y - piece)
+            y1 = min(frame_bottom, peak_y)
+        if y1 <= y0:
+            return
+        px0, px1 = self._effective_x_span(x0, x1, peak_h) if direction < 0 else (x0, x1)
+        primitives.append(self._primitive(px0, px1, y0, y1, kind=kind, color=color, color2=None, z_index=10))
+
+    def _append_digital_peak_segments(
+        self,
+        primitives: list[Primitive],
+        *,
+        band_index: int,
+        x0: int,
+        x1: int,
+        base_y: int,
+        max_height: int,
+        current_value: float,
+        peak_value: float,
+        direction: int,
+        frame_top: int,
+        frame_bottom: int,
+        color_mode: str,
+    ) -> None:
+        current = float(np.clip(current_value, 0.0, 1.0))
+        peak = float(np.clip(peak_value, 0.0, 1.0))
+        if peak <= current + 1e-5:
+            return
+        if self.style.gamma != 1.0:
+            current = current ** self.style.gamma
+            peak = peak ** self.style.gamma
+        count, segment_h, gap = self._digital_layout(max_height)
+        lit = int(round(current * count))
+        lit = max(0, min(count, lit))
+        peak_index = int(math.floor(peak * count))
+        peak_index = max(0, min(count - 1, peak_index))
+        if peak_index < lit:
+            return
+        peak_segments = max(1, int(getattr(self.style, "digital_peak_segments", 1) or 1))
+        first_index = max(lit, peak_index - peak_segments + 1)
+        kind = "rounded_rect" if gap > 0 and int(self.style.corner_radius) > 0 else "rect"
+        for s in range(first_index, peak_index + 1):
+            if direction < 0:
+                y1 = int(base_y) - s * (segment_h + gap)
+                y0 = y1 - segment_h
+            else:
+                y0 = int(base_y) + s * (segment_h + gap)
+                y1 = y0 + segment_h
+            y0 = max(frame_top, y0)
+            y1 = min(frame_bottom, y1)
+            if y1 <= y0:
+                continue
+            color = self._digital_color(band_index, s, count, color_mode)
+            primitives.append(self._primitive(x0, x1, y0, y1, kind=kind, color=color, color2=None, z_index=10))
+
+    def primitives_for_values(self, values: np.ndarray, peak_values: np.ndarray | None = None) -> list[Primitive]:
         layout = self.build_layout()
         vals = np.asarray(values, dtype=np.float32)
+        peaks = np.asarray(peak_values, dtype=np.float32) if peak_values is not None else None
         style = self.style
         primitives: list[Primitive] = []
         frame_top = int(self.origin_y)
@@ -225,14 +338,16 @@ class BarSpectrumPart:
         digital_enabled = bool(getattr(style, "digital_enabled", False))
 
         for b, value in enumerate(vals[:int(style.bars)]):
-            v = float(np.clip(value, 0.0, 1.0))
+            raw_v = float(np.clip(value, 0.0, 1.0))
+            v = raw_v
             if style.gamma != 1.0:
                 v = v ** style.gamma
             h = int(round(v * layout.max_height))
-            if h <= 0:
-                continue
 
             x0, x1 = layout.positions[b]
+            peak_v = None
+            if peaks is not None and b < peaks.shape[0]:
+                peak_v = float(peaks[b])
             if digital_enabled:
                 if layout.mode == "dual":
                     center = int(layout.base_y)
@@ -262,6 +377,35 @@ class BarSpectrumPart:
                         frame_bottom=frame_bottom,
                         color_mode=color_mode,
                     )
+                    if peak_v is not None:
+                        self._append_digital_peak_segments(
+                            primitives,
+                            band_index=b,
+                            x0=x0,
+                            x1=x1,
+                            base_y=center,
+                            max_height=layout.max_height,
+                            current_value=raw_v,
+                            peak_value=peak_v,
+                            direction=-1,
+                            frame_top=frame_top,
+                            frame_bottom=frame_bottom,
+                            color_mode=color_mode,
+                        )
+                        self._append_digital_peak_segments(
+                            primitives,
+                            band_index=b,
+                            x0=x0,
+                            x1=x1,
+                            base_y=center,
+                            max_height=layout.max_height,
+                            current_value=raw_v,
+                            peak_value=peak_v,
+                            direction=1,
+                            frame_top=frame_top,
+                            frame_bottom=frame_bottom,
+                            color_mode=color_mode,
+                        )
                 else:
                     self._append_digital_segments(
                         primitives,
@@ -276,10 +420,26 @@ class BarSpectrumPart:
                         frame_bottom=frame_bottom,
                         color_mode=color_mode,
                     )
+                    if peak_v is not None:
+                        self._append_digital_peak_segments(
+                            primitives,
+                            band_index=b,
+                            x0=x0,
+                            x1=x1,
+                            base_y=int(layout.base_y),
+                            max_height=layout.max_height,
+                            current_value=raw_v,
+                            peak_value=peak_v,
+                            direction=-1,
+                            frame_top=frame_top,
+                            frame_bottom=frame_bottom,
+                            color_mode=color_mode,
+                        )
                 continue
 
-            if layout.mode != "dual":
-                x0, x1 = self._effective_x_span(x0, x1, h)
+            body_x0, body_x1 = x0, x1
+            if layout.mode != "dual" and h > 0:
+                body_x0, body_x1 = self._effective_x_span(x0, x1, h)
 
             if color_mode in {'band', 'loop_band'}:
                 solid = self._horizontal_band_color(b, color_mode)
@@ -297,7 +457,7 @@ class BarSpectrumPart:
                 y1 = min(frame_bottom, center)
                 if y1 > y0:
                     primitives.append(self._primitive(
-                        x0, x1, y0, y1,
+                        body_x0, body_x1, y0, y1,
                         kind=("top_rounded_rect" if int(style.corner_radius) > 0 else "rect"),
                         color=top_outer,
                         color2=bottom_inner,
@@ -306,15 +466,59 @@ class BarSpectrumPart:
                 y1 = min(frame_bottom, center + h)
                 if y1 > y0:
                     primitives.append(self._primitive(
-                        x0, x1, y0, y1,
+                        body_x0, body_x1, y0, y1,
                         kind=("bottom_rounded_rect" if int(style.corner_radius) > 0 else "rect"),
                         color=(bottom_inner if bottom_inner is not None else bottom_outer),
                         color2=(bottom_outer if bottom_inner is not None else None),
                     ))
+                if peak_v is not None:
+                    self._append_normal_peak(
+                        primitives,
+                        band_index=b,
+                        x0=x0,
+                        x1=x1,
+                        base_y=center,
+                        max_height=layout.max_height,
+                        current_value=raw_v,
+                        peak_value=peak_v,
+                        direction=-1,
+                        frame_top=frame_top,
+                        frame_bottom=frame_bottom,
+                        color_mode=color_mode,
+                    )
+                    self._append_normal_peak(
+                        primitives,
+                        band_index=b,
+                        x0=x0,
+                        x1=x1,
+                        base_y=center,
+                        max_height=layout.max_height,
+                        current_value=raw_v,
+                        peak_value=peak_v,
+                        direction=1,
+                        frame_top=frame_top,
+                        frame_bottom=frame_bottom,
+                        color_mode=color_mode,
+                    )
             else:
                 y0 = max(frame_top, int(layout.base_y) - h)
                 y1 = min(frame_bottom, int(layout.base_y))
                 if y1 > y0:
-                    primitives.append(self._primitive(x0, x1, y0, y1, color=top_outer, color2=bottom_inner))
+                    primitives.append(self._primitive(body_x0, body_x1, y0, y1, color=top_outer, color2=bottom_inner))
+                if peak_v is not None:
+                    self._append_normal_peak(
+                        primitives,
+                        band_index=b,
+                        x0=x0,
+                        x1=x1,
+                        base_y=int(layout.base_y),
+                        max_height=layout.max_height,
+                        current_value=raw_v,
+                        peak_value=peak_v,
+                        direction=-1,
+                        frame_top=frame_top,
+                        frame_bottom=frame_bottom,
+                        color_mode=color_mode,
+                    )
 
         return primitives

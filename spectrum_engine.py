@@ -15,16 +15,25 @@ from spectrum_types import (
     EncodeSettings,
     SpectrumData,
     TransformSettings,
+    PostTransformModulation,
+    PostTransformSettings,
 )
 from spectrum_utils import log, parse_color, color_to_hex, unique_path, runtime_app_dir, find_external_tool, resolve_external_tool
 from spectrum_audio import check_environment, run_ffprobe_duration, decode_audio_to_float32_mono
 from spectrum_motion import map_db_to_dynamic_values, smooth_values
+from spectrum_peak import compute_peak_hold_values
 from spectrum_transform import (
     aggregate_analysis_bars,
     apply_integer_scroll,
     apply_shape_profile,
     transform_spectrum_data,
     slice_spectrum_data,
+)
+from spectrum_post_transform import (
+    PostTransformApplier,
+    apply_post_transform,
+    is_identity_post_transform,
+    resolve_post_transform,
 )
 from spectrum_analysis import (
     build_band_indices,
@@ -64,11 +73,12 @@ from spectrum_workflow import (
 
 __all__ = [
     "VERSION", "RGB", "LogFn",
-    "RenderStyle", "MotionSettings", "EncodeSettings", "SpectrumData", "TransformSettings",
+    "RenderStyle", "MotionSettings", "EncodeSettings", "SpectrumData", "TransformSettings", "PostTransformModulation", "PostTransformSettings",
     "log", "parse_color", "color_to_hex", "unique_path", "runtime_app_dir", "find_external_tool", "resolve_external_tool",
     "check_environment", "run_ffprobe_duration", "decode_audio_to_float32_mono",
-    "map_db_to_dynamic_values", "smooth_values",
+    "map_db_to_dynamic_values", "smooth_values", "compute_peak_hold_values",
     "aggregate_analysis_bars", "apply_integer_scroll", "apply_shape_profile", "transform_spectrum_data", "slice_spectrum_data",
+    "PostTransformApplier", "apply_post_transform", "is_identity_post_transform", "resolve_post_transform",
     "build_band_indices", "build_frequency_edges", "analyze_spectrum_data", "analyze_bars",
     "Primitive", "create_frame", "draw_primitives",
     "Bounds", "CanvasSpec", "Scene", "BarLayout", "BarSpectrumPart",
@@ -78,4 +88,3 @@ __all__ = [
     "find_loud_segment_start", "suggest_frequency_range", "analyze_preview_segment",
     "render_audio_to_video", "build_default_output_path", "build_matte_output_path", "unique_output_pair",
 ]
-

@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Audio Spectrum Overlay Maker v1.2.0 GUI."""
+"""Audio Spectrum Overlay Maker v1.3.0 GUI."""
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import json
 import os
@@ -26,6 +27,72 @@ def _runtime_app_dir_early() -> Path:
     return Path(__file__).resolve().parent
 
 
+def _pyinstaller_bundle_dir_early() -> Path | None:
+    bundle_dir = getattr(sys, "_MEIPASS", None)
+    if bundle_dir:
+        return Path(bundle_dir).resolve()
+    return None
+
+
+def _composer_search_dirs_early() -> list[Path]:
+    dirs: list[Path] = []
+    bundle_dir = _pyinstaller_bundle_dir_early()
+    if bundle_dir is not None:
+        dirs.append(bundle_dir)
+    dirs.append(_runtime_app_dir_early())
+    dirs.append(Path(__file__).resolve().parent)
+
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for path in dirs:
+        key = str(path).lower()
+        if key not in seen:
+            unique.append(path)
+            seen.add(key)
+    return unique
+
+
+def find_composer_script() -> Path | None:
+    for directory in _composer_search_dirs_early():
+        candidate = directory / COMPOSER_SCRIPT_NAME
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _composer_missing_message() -> str:
+    searched = "\n".join(str(directory / COMPOSER_SCRIPT_NAME) for directory in _composer_search_dirs_early())
+    return (
+        f"{COMPOSER_SCRIPT_NAME} was not found.\n\n"
+        "Searched paths:\n"
+        f"{searched}\n\n"
+        "When building with PyInstaller, include final_composer.py as a data file "
+        "or place it next to the EXE."
+    )
+
+
+def _load_composer_module(composer_path: Path | None):
+    if composer_path is not None:
+        app_dir = composer_path.parent
+        if str(app_dir) not in sys.path:
+            sys.path.insert(0, str(app_dir))
+        spec = importlib.util.spec_from_file_location("final_composer", composer_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"Could not load {composer_path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["final_composer"] = module
+        spec.loader.exec_module(module)
+        return module
+
+    # Fallback for PyInstaller builds that include final_composer as a hidden
+    # module instead of a loose .py data file.  This path is only used in the
+    # composer child process or after the user presses the composer button.
+    spec = importlib.util.find_spec("final_composer")
+    if spec is None:
+        raise FileNotFoundError(_composer_missing_message())
+    return importlib.import_module("final_composer")
+
+
 def _show_startup_error(title: str, message: str) -> None:
     try:
         from tkinter import messagebox
@@ -37,23 +104,9 @@ def _show_startup_error(title: str, message: str) -> None:
 def _run_composer_mode_if_requested() -> None:
     if COMPOSER_MODE_ARG not in sys.argv:
         return
-    app_dir = _runtime_app_dir_early()
-    composer_path = app_dir / COMPOSER_SCRIPT_NAME
-    if not composer_path.is_file():
-        _show_startup_error(
-            "SRT Spectrum Video Composer",
-            f"{COMPOSER_SCRIPT_NAME} was not found.\n{composer_path}",
-        )
-        raise SystemExit(1)
     try:
-        if str(app_dir) not in sys.path:
-            sys.path.insert(0, str(app_dir))
-        spec = importlib.util.spec_from_file_location("final_composer", composer_path)
-        if spec is None or spec.loader is None:
-            raise RuntimeError(f"Could not load {composer_path}")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules["final_composer"] = module
-        spec.loader.exec_module(module)
+        composer_path = find_composer_script()
+        module = _load_composer_module(composer_path)
         composer_main = getattr(module, "main", None)
         if not callable(composer_main):
             raise RuntimeError(f"{COMPOSER_SCRIPT_NAME} does not define main().")
@@ -85,10 +138,13 @@ from spectrum_engine import (
     MotionSettings,
     EncodeSettings,
     TransformSettings,
+    PostTransformSettings,
+    PostTransformApplier,
     analyze_preview_segment,
     build_default_output_path,
     build_matte_output_path,
     color_to_hex,
+    compute_peak_hold_values,
     compute_band_color_offset,
     draw_spectrum_frame,
     find_loud_segment_start,
@@ -178,6 +234,8 @@ TOOLTIPS: dict[str, str] = {
     "scroll_step_frames": "何フレームごとに帯域を1つシフトするかを指定します。小さいほどスクロールが速く見えます。",
     "preview_video": "音源の先頭から短いプレビューMP4を書き出します。",
     "motion_preview": "実際の音源を使ってGUI内で短い動きプレビューを再生します。",
+    "motion_preview_2s": "重い変形設定を素早く確認するため、2秒だけ動きプレビューを作成します。",
+    "motion_preview_10s": "通常確認用に10秒の動きプレビューを作成します。",
     "full_render": "音源全体に同期したスペアナMP4を書き出します。",
     "open_output": "現在指定している出力先フォルダを開きます。",
     "color_button": "色選択ダイアログを開きます。",
@@ -199,6 +257,11 @@ TOOLTIPS: dict[str, str] = {
     "digital_enabled": "バーを指定数のセグメントに分け、点灯/消灯だけで表示します。セグメントの途中まで塗られる状態はありません。",
     "digital_segments": "1本のバーを縦方向に何分割するかを指定します。値を増やすほど細かいLEDメーター風になります。",
     "digital_gap_px": "セグメント同士の間に入れる縦方向の隙間です。0にすると隙間なしで段階表示します。",
+    "peak_hold_enabled": "バーが下がり始めたあと、直近のピーク位置に短いピーク片を残します。メイン動画とマット動画の両方に反映されます。",
+    "peak_hold_ms": "ピーク片を固定表示する時間です。標準は100msです。",
+    "peak_decay_ms": "保持時間後にピーク片が上端から下端まで落ちる目安時間です。値を大きくするとゆっくり落ちます。",
+    "peak_size_percent": "通常バー時のピーク片の長さです。最大バー長に対する割合で、実際の描画は2〜10pxに収まります。",
+    "digital_peak_segments": "デジタル表示時のピーク片の区画数です。通常は1区画で十分です。",
     "max_height_percent": "バーが使う最大高さです。値を上げるとピーク時のバーが高くなります。",
     "side_margin_percent": "左右の余白です。値を上げると全体が中央寄りに狭くなります。",
     "bottom_margin_percent": "下端からバーの基準線までの余白です。値を上げるとバー全体が少し上に移動します。",
@@ -250,6 +313,8 @@ TOOLTIPS_EN: dict[str, str] = {
     "scroll_step_frames": "How many frames pass before the band assignment shifts by one bar.",
     "preview_video": "Writes a short preview MP4 from the beginning of the audio.",
     "motion_preview": "Play a short in-app motion preview using the actual audio file.",
+    "motion_preview_2s": "Build a 2-second motion preview for quick checks with heavy transforms.",
+    "motion_preview_10s": "Build a 10-second motion preview for normal checks.",
     "full_render": "Writes a full-length spectrum MP4 synchronized to the audio.",
     "open_output": "Open the currently selected output folder.",
     "color_button": "Open the color picker.",
@@ -269,6 +334,11 @@ TOOLTIPS_EN: dict[str, str] = {
     "digital_enabled": "Split bars into on/off segments. Segments are never partially filled.",
     "digital_segments": "Number of vertical segments per bar.",
     "digital_gap_px": "Pixel gap between digital segments. Use 0 for no gap.",
+    "peak_hold_enabled": "Draw a short peak marker at each bar's recent maximum after the bar starts falling. This is included in both main and matte output.",
+    "peak_hold_ms": "How long the peak marker stays fixed before it starts falling.",
+    "peak_decay_ms": "Approximate time for the peak marker to fall from full height to zero after the hold time.",
+    "peak_size_percent": "Peak marker length for normal bars, as a percentage of maximum bar height. Drawing is clamped to 2-10 px.",
+    "digital_peak_segments": "Number of digital segments used by the peak marker. One segment is usually enough.",
     "max_height_percent": "Maximum bar height.",
     "side_margin_percent": "Left/right margin.",
     "bottom_margin_percent": "Bottom margin.",
@@ -315,8 +385,11 @@ UI_TEXT = {
         "choose": "選択...",
         "save_preset": "プリセット保存",
         "delete_preset": "プリセット削除",
+        "reset": "リセット",
         "still_preview": "見た目プレビュー",
         "motion_preview": "動きプレビュー",
+        "motion_preview_2s": "2秒プレビュー",
+        "motion_preview_10s": "10秒プレビュー",
         "stop": "停止",
         "not_played": "未再生",
         "motion_message": "音源を選択して「動きプレビュー」を押してください",
@@ -341,6 +414,22 @@ UI_TEXT = {
         "digital_enabled": "デジタル化",
         "digital_segments": "分割数",
         "digital_gap_px": "ギャップpx",
+        "peak_hold_enabled": "ピークホールド",
+        "peak_hold_ms": "保持ms",
+        "peak_decay_ms": "下降ms",
+        "peak_size_percent": "ピーク長%",
+        "digital_peak_segments": "デジタルピーク区画",
+        "post_transform_rotate_degrees": "回転角度°",
+        "post_transform_trapezoid_vertical_percent": "縦台形",
+        "post_transform_trapezoid_horizontal_percent": "横台形",
+        "post_transform_audio_scale_enabled": "音量連動の拡大",
+        "post_transform_audio_scale_max_percent": "音量拡大率%",
+        "post_transform_audio_scale_low_only": "低域のみ参照",
+        "post_transform_audio_scale_low_band_percent": "低域参照範囲%",
+        "post_transform_audio_scale_floor_percent": "拡大開始閾値",
+        "post_transform_audio_scale_ceiling_percent": "最大拡大天井",
+        "post_transform_audio_scale_hold_ms": "音量保持ms",
+        "post_transform_audio_scale_decay_ms": "音量減衰ms",
         "max_height_percent": "最大高さ%",
         "side_margin_percent": "左右余白%",
         "bottom_margin_percent": "下余白%",
@@ -356,6 +445,8 @@ UI_TEXT = {
         "color_button": "色...",
         "advanced_recalc": "定性的設定から再計算",
         "frequency_mode": "周波数設定",
+        "auto_frequency_range_pending": "自動設定音域: 未解析",
+        "auto_frequency_range_manual": "自動設定音域: 手動設定中",
         "freq_min": "最低周波数Hz",
         "freq_max": "最高周波数Hz",
         "sample_rate": "sample rate",
@@ -386,8 +477,11 @@ UI_TEXT = {
         "choose": "Browse...",
         "save_preset": "Save Preset",
         "delete_preset": "Delete Preset",
+        "reset": "Reset",
         "still_preview": "Visual Preview",
         "motion_preview": "Motion Preview",
+        "motion_preview_2s": "2s Preview",
+        "motion_preview_10s": "10s Preview",
         "stop": "Stop",
         "not_played": "Not played",
         "motion_message": "Select an audio file and click Motion Preview.",
@@ -412,6 +506,22 @@ UI_TEXT = {
         "digital_enabled": "Digital Segments",
         "digital_segments": "Segments",
         "digital_gap_px": "Gap px",
+        "peak_hold_enabled": "Peak Hold",
+        "peak_hold_ms": "Hold ms",
+        "peak_decay_ms": "Decay ms",
+        "peak_size_percent": "Peak Size %",
+        "digital_peak_segments": "Digital Peak Segments",
+        "post_transform_rotate_degrees": "Rotation degrees",
+        "post_transform_trapezoid_vertical_percent": "Vertical trapezoid",
+        "post_transform_trapezoid_horizontal_percent": "Horizontal trapezoid",
+        "post_transform_audio_scale_enabled": "Audio reactive scale",
+        "post_transform_audio_scale_max_percent": "Audio scale %",
+        "post_transform_audio_scale_low_only": "Use low bands only",
+        "post_transform_audio_scale_low_band_percent": "Low band range %",
+        "post_transform_audio_scale_floor_percent": "Audio scale threshold",
+        "post_transform_audio_scale_ceiling_percent": "Audio scale ceiling",
+        "post_transform_audio_scale_hold_ms": "Audio hold ms",
+        "post_transform_audio_scale_decay_ms": "Audio decay ms",
         "max_height_percent": "Max Height %",
         "side_margin_percent": "Side Margin %",
         "bottom_margin_percent": "Bottom Margin %",
@@ -427,6 +537,8 @@ UI_TEXT = {
         "color_button": "Color...",
         "advanced_recalc": "Recalculate from qualitative controls",
         "frequency_mode": "Frequency Mode",
+        "auto_frequency_range_pending": "Auto range: not analyzed",
+        "auto_frequency_range_manual": "Auto range: manual mode",
         "freq_min": "Min Frequency Hz",
         "freq_max": "Max Frequency Hz",
         "sample_rate": "sample rate",
@@ -462,6 +574,28 @@ TOOLTIPS_EN["open_composer"] = (
     "Open SRT Spectrum Video Composer in a separate process, passing only the "
     "current audio file, spectrum video, and matte video. Missing items are passed as blank values."
 )
+TOOLTIPS["post_transform_rotate_degrees"] = "静的な回転角度です。キャンバスサイズは維持され、はみ出した部分はクリップされます。"
+TOOLTIPS["post_transform_trapezoid_vertical_percent"] = "-100で上部が小さく、0で変形なし、+100で下部が小さくなります。"
+TOOLTIPS["post_transform_trapezoid_horizontal_percent"] = "-100で左側が小さく、0で変形なし、+100で右側が小さくなります。"
+TOOLTIPS["post_transform_audio_scale_enabled"] = "オンにすると、音量に応じてPost Transformの拡大率を変化させます。"
+TOOLTIPS["post_transform_audio_scale_max_percent"] = "音量連動時の到達倍率です。100より大きいと拡大、100より小さいと音量に応じて縮小します。"
+TOOLTIPS["post_transform_audio_scale_low_only"] = "オンにすると、音量連動ズームの判定に低域側のバーだけを使います。"
+TOOLTIPS["post_transform_audio_scale_low_band_percent"] = "低域のみ参照がオンのとき、低域側から何%のバーを音量判定に使うかを指定します。"
+TOOLTIPS["post_transform_audio_scale_floor_percent"] = "音量連動ズームを開始する全体音量です。この値以下は拡大なしとして扱います。"
+TOOLTIPS["post_transform_audio_scale_ceiling_percent"] = "この全体音量以上で音量連動ズームが最大拡大率に到達します。"
+TOOLTIPS["post_transform_audio_scale_hold_ms"] = "音量連動ズームが大きくなったあと、その最大値を保持する時間です。"
+TOOLTIPS["post_transform_audio_scale_decay_ms"] = "保持後に音量連動ズームが元の音量に向かって戻る速さです。大きいほどゆっくり戻ります。"
+TOOLTIPS_EN["post_transform_rotate_degrees"] = "Static rotation angle in degrees. The canvas size is preserved and out-of-frame areas are clipped."
+TOOLTIPS_EN["post_transform_trapezoid_vertical_percent"] = "-100 narrows the top, 0 disables it, and +100 narrows the bottom."
+TOOLTIPS_EN["post_transform_trapezoid_horizontal_percent"] = "-100 narrows the left side, 0 disables it, and +100 narrows the right side."
+TOOLTIPS_EN["post_transform_audio_scale_enabled"] = "Enable Post Transform scaling driven by audio level."
+TOOLTIPS_EN["post_transform_audio_scale_max_percent"] = "Target scale for audio-reactive scaling. Above 100 enlarges; below 100 shrinks with audio."
+TOOLTIPS_EN["post_transform_audio_scale_low_only"] = "Use only the low-frequency side bars for audio-reactive zoom detection."
+TOOLTIPS_EN["post_transform_audio_scale_low_band_percent"] = "When low-band detection is enabled, this controls how much of the low-frequency side is averaged."
+TOOLTIPS_EN["post_transform_audio_scale_floor_percent"] = "Overall volume where audio-reactive zoom starts. Lower values are treated as no zoom."
+TOOLTIPS_EN["post_transform_audio_scale_ceiling_percent"] = "Overall volume where audio-reactive zoom reaches the maximum scale."
+TOOLTIPS_EN["post_transform_audio_scale_hold_ms"] = "How long audio-reactive zoom holds its recent maximum."
+TOOLTIPS_EN["post_transform_audio_scale_decay_ms"] = "How slowly audio-reactive zoom falls after the hold. Larger values fall more slowly."
 for _ui_lang, _texts in UI_TEXT.items():
     _texts["open_composer"] = (
         "Open SRT Spectrum Video Composer"
@@ -532,14 +666,15 @@ QUALITATIVE_KEYS = {
 ADVANCED_SETTING_KEYS = {
     # Frequency / analysis
     "frequency_mode", "freq_min", "freq_max",
-    "sample_rate", "fft_size", "analysis_bands",
+    "sample_rate", "fft_size", "analysis_bands", "post_transform_audio_scale_low_band_percent",
     # Dynamic motion internals
     "min_db", "max_db", "gain_db",
     "attack", "release",
     "relative_range_db", "peak_percentile",
     "base_cut", "pulse_amount", "pulse_speed",
     # Visual correction / encoder settings exposed in the advanced tab
-    "gamma", "crf", "encoder", "x264_preset",
+    "gamma",
+    "crf", "encoder", "x264_preset",
 }
 
 OPERATIONAL_KEYS = {
@@ -577,6 +712,8 @@ class App(tk.Tk):
         self.preview_resize_after_id: str | None = None
         self.last_spectrum_video_path: Path | None = None
         self.last_spectrum_mask_path: Path | None = None
+        self.last_auto_frequency_range: tuple[float, float] | None = None
+        self.auto_frequency_range_label: ttk.Label | None = None
 
         self._init_style()
         self._init_vars()
@@ -623,6 +760,11 @@ class App(tk.Tk):
             "digital_enabled": tk.BooleanVar(value=False),
             "digital_segments": tk.IntVar(value=16),
             "digital_gap_px": tk.IntVar(value=2),
+            "peak_hold_enabled": tk.BooleanVar(value=False),
+            "peak_hold_ms": tk.IntVar(value=100),
+            "peak_decay_ms": tk.IntVar(value=300),
+            "peak_size_percent": tk.IntVar(value=4),
+            "digital_peak_segments": tk.IntVar(value=1),
             "max_height_percent": tk.IntVar(value=78),
             "side_margin_percent": tk.IntVar(value=5),
             "bottom_margin_percent": tk.IntVar(value=8),
@@ -656,6 +798,21 @@ class App(tk.Tk):
             "pulse_amount": tk.DoubleVar(value=0.80),
             "pulse_speed": tk.DoubleVar(value=0.25),
             "gamma": tk.DoubleVar(value=0.85),
+            "post_transform_type": tk.StringVar(value="None"),
+            "post_transform_rotate_degrees": tk.DoubleVar(value=0.0),
+            "post_transform_trapezoid_vertical_percent": tk.IntVar(value=0),
+            "post_transform_trapezoid_horizontal_percent": tk.IntVar(value=0),
+            "post_transform_scale_percent": tk.IntVar(value=100),
+            "post_transform_audio_scale_enabled": tk.BooleanVar(value=False),
+            "post_transform_audio_scale_max_percent": tk.IntVar(value=115),
+            "post_transform_audio_scale_low_only": tk.BooleanVar(value=True),
+            "post_transform_audio_scale_low_band_percent": tk.IntVar(value=25),
+            "post_transform_audio_scale_floor_percent": tk.IntVar(value=10),
+            "post_transform_audio_scale_ceiling_percent": tk.IntVar(value=50),
+            "post_transform_audio_scale_hold_ms": tk.IntVar(value=66),
+            "post_transform_audio_scale_decay_ms": tk.IntVar(value=167),
+            "post_transform_trapezoid_top_percent": tk.IntVar(value=100),
+            "post_transform_trapezoid_bottom_percent": tk.IntVar(value=100),
             "crf": tk.IntVar(value=18),
             "encoder": tk.StringVar(value="libx264"),
             "x264_preset": tk.StringVar(value="veryfast"),
@@ -740,7 +897,32 @@ class App(tk.Tk):
         if not self.motion_frames:
             self._draw_canvas_message(self.motion_canvas, self.ui("motion_message"))
         self.update_advanced_state_label()
+        self.update_auto_frequency_range_label()
         self.after_idle(self.refresh_preview_layout)
+
+    def update_auto_frequency_range_label(self) -> None:
+        label = self.auto_frequency_range_label
+        if label is None:
+            return
+        is_auto = str(self.choice_to_ja("frequency_mode", self.vars["frequency_mode"].get())) == "自動"
+        if not is_auto:
+            text = self.ui("auto_frequency_range_manual")
+        elif self.last_auto_frequency_range is None:
+            text = self.ui("auto_frequency_range_pending")
+        else:
+            low_hz, high_hz = self.last_auto_frequency_range
+            if self.current_language() == "English":
+                text = f"Auto range: {low_hz:.0f}-{high_hz:.0f} Hz"
+            else:
+                text = f"自動設定音域: {low_hz:.0f}～{high_hz:.0f}Hz"
+        try:
+            label.configure(text=text)
+        except Exception:
+            pass
+
+    def set_auto_frequency_range(self, low_hz: float | None, high_hz: float | None) -> None:
+        self.last_auto_frequency_range = None if low_hz is None or high_hz is None else (float(low_hz), float(high_hz))
+        self.update_auto_frequency_range_label()
 
     def _build_ui(self) -> None:
         root = ttk.Frame(self, padding=12)
@@ -769,8 +951,8 @@ class App(tk.Tk):
         # Match the main preview/settings pane ratio so the file fields end near
         # the right edge of the preview pane, and preset controls start near the
         # left edge of the settings pane.
-        top.columnconfigure(0, weight=3)
-        top.columnconfigure(1, weight=2)
+        top.columnconfigure(0, weight=3, uniform="main_panes")
+        top.columnconfigure(1, weight=2, uniform="main_panes")
 
         file_box = ttk.Frame(top, style="Card.TFrame")
         file_box.grid(row=0, column=0, sticky="ew", padx=(0, 10))
@@ -793,7 +975,7 @@ class App(tk.Tk):
         self.add_tooltip(choose_output_btn, "choose")
 
         preset_box = ttk.Frame(top, style="Card.TFrame")
-        preset_box.grid(row=0, column=1, sticky="nw", padx=(10, 0))
+        preset_box.grid(row=0, column=1, sticky="nw")
         self._label(preset_box, "プリセット", "preset").grid(row=0, column=0, sticky="w", padx=(0, 6))
         self.preset_combo = ttk.Combobox(preset_box, textvariable=self.vars["preset"], values=self.preset_manager.names(), state="readonly", width=28)
         self.preset_combo.grid(row=0, column=1, sticky="w", padx=(0, 6))
@@ -865,17 +1047,22 @@ class App(tk.Tk):
         motion_head.columnconfigure(1, weight=1)
         motion_head.columnconfigure(2, weight=0)
         motion_head.columnconfigure(3, weight=0)
+        motion_head.columnconfigure(4, weight=0)
         motion_title = ttk.Label(motion_head, text=self.ui("motion_preview"), style="Card.TLabel", font=("Yu Gothic UI", 10, "bold"))
         motion_title.grid(row=0, column=0, sticky="w")
         self.register_text(motion_title, "motion_preview")
         self.motion_status = ttk.Label(motion_head, text=self.ui("not_played"), style="Card.TLabel", foreground="#6b7280", anchor="center")
         self.motion_status.grid(row=0, column=1, sticky="ew", padx=(12, 12))
-        self.motion_button = ttk.Button(motion_head, text=self.ui("motion_preview"), command=self.start_motion_preview)
-        self.motion_button.grid(row=0, column=2, sticky="e")
-        self.register_text(self.motion_button, "motion_preview")
-        self.add_tooltip(self.motion_button, "motion_preview")
+        self.motion_button_2s = ttk.Button(motion_head, text=self.ui("motion_preview_2s"), command=lambda: self.start_motion_preview(2.0))
+        self.motion_button_2s.grid(row=0, column=2, sticky="e")
+        self.register_text(self.motion_button_2s, "motion_preview_2s")
+        self.add_tooltip(self.motion_button_2s, "motion_preview_2s")
+        self.motion_button = ttk.Button(motion_head, text=self.ui("motion_preview_10s"), command=lambda: self.start_motion_preview(10.0))
+        self.motion_button.grid(row=0, column=3, sticky="e", padx=(6, 0))
+        self.register_text(self.motion_button, "motion_preview_10s")
+        self.add_tooltip(self.motion_button, "motion_preview_10s")
         self.stop_motion_button = ttk.Button(motion_head, text=self.ui("stop"), command=self.stop_motion_preview)
-        self.stop_motion_button.grid(row=0, column=3, sticky="e", padx=(6, 0))
+        self.stop_motion_button.grid(row=0, column=4, sticky="e", padx=(6, 0))
         self.register_text(self.stop_motion_button, "stop")
         self.add_tooltip(self.stop_motion_button, "stop")
         self.motion_canvas = tk.Canvas(preview_frame, background="#F2F2F2", highlightthickness=0, height=self.preview_base_height)
@@ -931,9 +1118,29 @@ class App(tk.Tk):
         self._color_row(tab, row, "バー色2", "bar_color2"); row += 1
         self._scale(tab, row, "バー幅%", "bar_width_percent", 10, 100); row += 1
         self._spin(tab, row, "角丸半径px", "corner_radius", 0, 160, 1); row += 1
+        ttk.Separator(tab).grid(row=row, column=0, columnspan=3, sticky="ew", pady=12); row += 1
         self._check(tab, row, "デジタル化", "digital_enabled"); row += 1
         self._spin(tab, row, "分割数", "digital_segments", 1, 64, 1); row += 1
         self._spin(tab, row, "ギャップpx", "digital_gap_px", 0, 64, 1); row += 1
+        ttk.Separator(tab).grid(row=row, column=0, columnspan=3, sticky="ew", pady=12); row += 1
+        self._check(tab, row, "ピークホールド", "peak_hold_enabled"); row += 1
+        self._spin(tab, row, "保持ms", "peak_hold_ms", 0, 3000, 50); row += 1
+        self._spin(tab, row, "下降ms", "peak_decay_ms", 100, 5000, 50); row += 1
+        self._spin(tab, row, "ピーク長%", "peak_size_percent", 1, 20, 1); row += 1
+        self._spin(tab, row, "デジタルピーク区画", "digital_peak_segments", 1, 8, 1); row += 1
+        ttk.Separator(tab).grid(row=row, column=0, columnspan=3, sticky="ew", pady=12); row += 1
+        self._scale_float(tab, row, "回転角度°", "post_transform_rotate_degrees", -180, 180, 1, reset_to=0.0); row += 1
+        self._scale(tab, row, "縦台形", "post_transform_trapezoid_vertical_percent", -100, 100, reset_to=0); row += 1
+        self._scale(tab, row, "横台形", "post_transform_trapezoid_horizontal_percent", -100, 100, reset_to=0); row += 1
+        ttk.Separator(tab).grid(row=row, column=0, columnspan=3, sticky="ew", pady=12); row += 1
+        self._check(tab, row, "音量連動の拡大", "post_transform_audio_scale_enabled"); row += 1
+        self._scale(tab, row, "音量拡大率%", "post_transform_audio_scale_max_percent", 80, 150); row += 1
+        self._scale(tab, row, "拡大開始閾値", "post_transform_audio_scale_floor_percent", 0, 90); row += 1
+        self._scale(tab, row, "最大拡大天井", "post_transform_audio_scale_ceiling_percent", 1, 100); row += 1
+        self._spin(tab, row, "音量保持ms", "post_transform_audio_scale_hold_ms", 0, 3000, 1); row += 1
+        self._spin(tab, row, "音量減衰ms", "post_transform_audio_scale_decay_ms", 1, 5000, 1); row += 1
+        self._check(tab, row, "低域のみ参照", "post_transform_audio_scale_low_only"); row += 1
+        ttk.Separator(tab).grid(row=row, column=0, columnspan=3, sticky="ew", pady=12); row += 1
         self._scale(tab, row, "最大高さ%", "max_height_percent", 10, 95); row += 1
         self._scale(tab, row, "左右余白%", "side_margin_percent", 0, 30); row += 1
         self._scale(tab, row, "下余白%", "bottom_margin_percent", 0, 30); row += 1
@@ -956,14 +1163,13 @@ class App(tk.Tk):
         self._check(tab, row, "動きプレビューに適した区間を自動検出", "auto_preview_segment"); row += 1
         self._spin_float(tab, row, "スキャン秒数", "scan_seconds", 10, 300, 10); row += 1
         self._spin_float(tab, row, "手動開始秒", "preview_start", 0, 99999, 1); row += 1
-        self._spin_float(tab, row, "動きプレビュー秒数", "motion_preview_duration", 3, 30, 1); row += 1
         self._spin_float(tab, row, "動画プレビュー秒数", "preview_duration", 5, 120, 5); row += 1
         self._spin_float(tab, row, "ウォームアップ秒", "warmup", 0, 30, 1); row += 1
 
     def _build_advanced_tab(self) -> None:
         tab = self._make_scrollable_tab("詳細設定", "advanced_tab")
         row = 0
-        self._combo(tab, row, "周波数設定", "frequency_mode", ["自動", "手動"]); row += 1
+        self._frequency_mode_row(tab, row); row += 1
         self._spin_float(tab, row, "最低周波数Hz", "freq_min", 20, 1000, 5); row += 1
         self._spin_float(tab, row, "最高周波数Hz", "freq_max", 1000, 20000, 100); row += 1
         ttk.Separator(tab).grid(row=row, column=0, columnspan=3, sticky="ew", pady=12); row += 1
@@ -987,6 +1193,7 @@ class App(tk.Tk):
         self._spin_float(tab, row, "Pulse speed", "pulse_speed", 0.01, 0.95, 0.01); row += 1
         self._spin_float(tab, row, "Gamma", "gamma", 0.30, 2.00, 0.01); row += 1
         self._color_row(tab, row, "背景色", "background_color"); row += 1
+        self._spin(tab, row, "低域参照範囲%", "post_transform_audio_scale_low_band_percent", 5, 50, 1); row += 1
         ttk.Separator(tab).grid(row=row, column=0, columnspan=3, sticky="ew", pady=12); row += 1
         self._spin(tab, row, "CRF", "crf", 10, 35, 1); row += 1
         self._combo(tab, row, "Encoder", "encoder", ["libx264", "h264_nvenc"]); row += 1
@@ -1014,6 +1221,19 @@ class App(tk.Tk):
         widget.grid(row=row, column=1, sticky="w", pady=5)
         self.add_tooltip(widget, key)
 
+    def _frequency_mode_row(self, parent: tk.Widget, row: int) -> None:
+        key = "frequency_mode"
+        self._row_label(parent, row, "周波数設定", key)
+        box = ttk.Frame(parent)
+        box.grid(row=row, column=1, columnspan=2, sticky="w", pady=5)
+        widget = ttk.Combobox(box, textvariable=self.vars[key], values=self.choice_values(key), state="readonly", width=14)
+        widget.pack(side="left")
+        self.control_widgets[key] = widget
+        self.add_tooltip(widget, key)
+        self.auto_frequency_range_label = ttk.Label(box, text="", foreground="#6b7280")
+        self.auto_frequency_range_label.pack(side="left", padx=(12, 0))
+        self.update_auto_frequency_range_label()
+
     def _combo(self, parent: tk.Widget, row: int, text: str, key: str, values: list[Any]) -> None:
         self._row_label(parent, row, text, key)
         widget_values = self.choice_values(key) if key in CHOICE_OPTIONS else values
@@ -1028,7 +1248,7 @@ class App(tk.Tk):
         widget.grid(row=row, column=1, sticky="w", pady=5)
         self.add_tooltip(widget, key)
 
-    def _scale(self, parent: tk.Widget, row: int, text: str, key: str, frm: int, to: int) -> None:
+    def _scale(self, parent: tk.Widget, row: int, text: str, key: str, frm: int, to: int, reset_to: int | None = None) -> None:
         self._row_label(parent, row, text, key)
         box = ttk.Frame(parent)
         box.grid(row=row, column=1, sticky="ew", pady=5)
@@ -1037,6 +1257,28 @@ class App(tk.Tk):
         scale.grid(row=0, column=0, sticky="ew")
         spin = ttk.Spinbox(box, textvariable=self.vars[key], from_=frm, to=to, increment=1, width=6)
         spin.grid(row=0, column=1, sticky="e", padx=(8, 0))
+        if reset_to is not None:
+            reset = ttk.Button(box, text=self.ui("reset"), width=7, command=lambda k=key, v=reset_to: self.vars[k].set(v))
+            reset.grid(row=0, column=2, sticky="e", padx=(6, 0))
+            self.register_text(reset, "reset")
+            self.add_tooltip(reset, key)
+        self.add_tooltip(scale, key)
+        self.add_tooltip(spin, key)
+
+    def _scale_float(self, parent: tk.Widget, row: int, text: str, key: str, frm: float, to: float, inc: float, reset_to: float | None = None) -> None:
+        self._row_label(parent, row, text, key)
+        box = ttk.Frame(parent)
+        box.grid(row=row, column=1, sticky="ew", pady=5)
+        box.columnconfigure(0, weight=1)
+        scale = ttk.Scale(box, from_=frm, to=to, variable=self.vars[key], orient="horizontal")
+        scale.grid(row=0, column=0, sticky="ew")
+        spin = ttk.Spinbox(box, textvariable=self.vars[key], from_=frm, to=to, increment=inc, width=7)
+        spin.grid(row=0, column=1, sticky="e", padx=(8, 0))
+        if reset_to is not None:
+            reset = ttk.Button(box, text=self.ui("reset"), width=7, command=lambda k=key, v=reset_to: self.vars[k].set(v))
+            reset.grid(row=0, column=2, sticky="e", padx=(6, 0))
+            self.register_text(reset, "reset")
+            self.add_tooltip(reset, key)
         self.add_tooltip(scale, key)
         self.add_tooltip(spin, key)
 
@@ -1097,6 +1339,11 @@ class App(tk.Tk):
         if self.apply_in_progress:
             return
 
+        if key == "input_file":
+            self.set_auto_frequency_range(None, None)
+        elif key == "frequency_mode":
+            self.update_auto_frequency_range_label()
+
         if key not in OPERATIONAL_KEYS and self.vars["preset"].get() != CUSTOM_LABEL:
             self.vars["preset"].set(CUSTOM_LABEL)
 
@@ -1116,7 +1363,7 @@ class App(tk.Tk):
             if str(self.choice_to_ja(key, self.vars[key].get())) != "カスタム":
                 self.recompute_advanced_from_qualitative()
 
-        if key in {"width", "height", "bars", "display_mode", "color_mode", "background_color", "bar_color", "bar_color2", "bar_width_percent", "corner_radius", "digital_enabled", "digital_segments", "digital_gap_px", "max_height_percent", "side_margin_percent", "bottom_margin_percent", "gamma", "scroll_mode", "scroll_step_frames"}:
+        if key in {"width", "height", "bars", "display_mode", "color_mode", "background_color", "bar_color", "bar_color2", "bar_width_percent", "corner_radius", "digital_enabled", "digital_segments", "digital_gap_px", "peak_hold_enabled", "peak_hold_ms", "peak_decay_ms", "peak_size_percent", "digital_peak_segments", "max_height_percent", "side_margin_percent", "bottom_margin_percent", "gamma", "scroll_mode", "scroll_step_frames", "post_transform_rotate_degrees", "post_transform_trapezoid_vertical_percent", "post_transform_trapezoid_horizontal_percent", "post_transform_audio_scale_enabled", "post_transform_audio_scale_max_percent", "post_transform_audio_scale_low_only", "post_transform_audio_scale_low_band_percent", "post_transform_audio_scale_floor_percent", "post_transform_audio_scale_ceiling_percent", "post_transform_audio_scale_hold_ms", "post_transform_audio_scale_decay_ms"}:
             if key == "bars" and not bool(self.vars["advanced_custom"].get()):
                 self.recompute_advanced_from_qualitative()
             self.after_idle(self.update_still_preview)
@@ -1315,6 +1562,11 @@ class App(tk.Tk):
             values.setdefault("digital_enabled", False)
             values.setdefault("digital_segments", 16)
             values.setdefault("digital_gap_px", 2)
+            values.setdefault("peak_hold_enabled", False)
+            values.setdefault("peak_hold_ms", 100)
+            values.setdefault("peak_decay_ms", 300)
+            values.setdefault("peak_size_percent", 4)
+            values.setdefault("digital_peak_segments", 1)
             values.setdefault("scroll_mode", "なし")
             values.setdefault("scroll_step_frames", 2)
             values.setdefault("frequency_mode", "自動")
@@ -1322,6 +1574,31 @@ class App(tk.Tk):
             values.setdefault("motion_detail", "標準")
             values.setdefault("contrast_profile", "標準")
             values.setdefault("advanced_custom", False)
+            values.setdefault("post_transform_type", "None")
+            values.setdefault("post_transform_rotate_degrees", 0.0)
+            values.setdefault("post_transform_trapezoid_vertical_percent", 0)
+            values.setdefault("post_transform_trapezoid_horizontal_percent", 0)
+            values.setdefault("post_transform_scale_percent", 100)
+            values.setdefault("post_transform_audio_scale_enabled", False)
+            values.setdefault("post_transform_audio_scale_max_percent", 115)
+            values.setdefault("post_transform_audio_scale_low_only", True)
+            values.setdefault("post_transform_audio_scale_low_band_percent", 25)
+            values.setdefault("post_transform_audio_scale_floor_percent", 10)
+            values.setdefault("post_transform_audio_scale_ceiling_percent", 50)
+            values.setdefault("post_transform_audio_scale_hold_ms", 66)
+            values.setdefault("post_transform_audio_scale_decay_ms", 167)
+            values.setdefault("post_transform_trapezoid_top_percent", 100)
+            values.setdefault("post_transform_trapezoid_bottom_percent", 100)
+            if (
+                values.get("post_transform_trapezoid_vertical_percent", 0) == 0
+                and values.get("post_transform_type") in {"Trapezoid", "台形", "trapezoid"}
+            ):
+                top = float(values.get("post_transform_trapezoid_top_percent", 100) or 100)
+                bottom = float(values.get("post_transform_trapezoid_bottom_percent", 100) or 100)
+                if top < bottom:
+                    values["post_transform_trapezoid_vertical_percent"] = int(round(top - 100))
+                elif bottom < top:
+                    values["post_transform_trapezoid_vertical_percent"] = int(round(100 - bottom))
             # Backward compatibility for older Japanese labels.
             if values.get("response_speed") == "遅い":
                 values["response_speed"] = "ゆったり"
@@ -1342,6 +1619,7 @@ class App(tk.Tk):
         self.update_still_preview()
         self.motion_status.configure(text=("Needs update" if self.current_language()=="English" else "要更新"))
         self.update_advanced_state_label()
+        self.update_auto_frequency_range_label()
 
     def update_preset_combo_values(self) -> None:
         values = self.preset_manager.names()
@@ -1417,6 +1695,11 @@ class App(tk.Tk):
             digital_enabled=bool(self.vars["digital_enabled"].get()),
             digital_segments=int(self.vars["digital_segments"].get()),
             digital_gap_px=int(self.vars["digital_gap_px"].get()),
+            peak_hold_enabled=bool(self.vars["peak_hold_enabled"].get()),
+            peak_hold_ms=int(self.vars["peak_hold_ms"].get()),
+            peak_decay_ms=int(self.vars["peak_decay_ms"].get()),
+            peak_size_percent=int(self.vars["peak_size_percent"].get()),
+            digital_peak_segments=int(self.vars["digital_peak_segments"].get()),
             gamma=float(self.vars["gamma"].get()),
         )
 
@@ -1448,6 +1731,34 @@ class App(tk.Tk):
             shape_profile="neutral",
             scroll_mode=mode,
             scroll_step_frames=max(1, int(self.vars["scroll_step_frames"].get())),
+        )
+
+    def current_post_transform(self) -> PostTransformSettings:
+        angle = float(self.vars["post_transform_rotate_degrees"].get())
+        vertical = int(self.vars["post_transform_trapezoid_vertical_percent"].get())
+        horizontal = int(self.vars["post_transform_trapezoid_horizontal_percent"].get())
+        audio_enabled = bool(self.vars["post_transform_audio_scale_enabled"].get())
+        audio_scale = int(self.vars["post_transform_audio_scale_max_percent"].get())
+        audio_low_only = bool(self.vars["post_transform_audio_scale_low_only"].get())
+        audio_low_band = int(self.vars["post_transform_audio_scale_low_band_percent"].get())
+        audio_floor = int(self.vars["post_transform_audio_scale_floor_percent"].get())
+        audio_ceiling = int(self.vars["post_transform_audio_scale_ceiling_percent"].get())
+        audio_hold = int(self.vars["post_transform_audio_scale_hold_ms"].get())
+        audio_decay = int(self.vars["post_transform_audio_scale_decay_ms"].get())
+        transform_type = "combined" if abs(angle) > 1.0e-9 or vertical != 0 or horizontal != 0 or (audio_enabled and audio_scale != 100) else "none"
+        return PostTransformSettings(
+            transform_type=transform_type,
+            angle_degrees=angle,
+            audio_scale_enabled=audio_enabled,
+            audio_scale_max_percent=float(audio_scale),
+            audio_scale_low_only=audio_low_only,
+            audio_scale_low_band_percent=audio_low_band,
+            audio_scale_floor_percent=float(audio_floor),
+            audio_scale_ceiling_percent=float(audio_ceiling),
+            audio_scale_hold_ms=audio_hold,
+            audio_scale_decay_ms=audio_decay,
+            trapezoid_vertical_percent=float(vertical),
+            trapezoid_horizontal_percent=float(horizontal),
         )
 
     def preview_fit_mode_ja(self) -> str:
@@ -1523,8 +1834,10 @@ class App(tk.Tk):
             motion.freq_min = low_hz
             motion.freq_max = high_hz
             self.log_from_thread(f"Using auto frequency range: {low_hz:.0f} - {high_hz:.0f} Hz")
+            self.after(0, lambda lo=low_hz, hi=high_hz: self.set_auto_frequency_range(lo, hi))
         else:
             self.log_from_thread(f"Using manual frequency range: {motion.freq_min:.0f} - {motion.freq_max:.0f} Hz")
+            self.after(0, self.update_auto_frequency_range_label)
         return motion
 
     def current_encode(self) -> EncodeSettings:
@@ -1627,7 +1940,9 @@ class App(tk.Tk):
             if style.width <= 0 or style.height <= 0:
                 return
             vals = still_preview_values(style.bars)
-            self.still_frame_array = draw_spectrum_frame(vals, style)
+            frame = draw_spectrum_frame(vals, style)
+            frame = PostTransformApplier(self.current_post_transform(), style.width, style.height, style.fps, style.background_color).apply(frame, 0, vals)
+            self.still_frame_array = frame
             self.redraw_still_canvas()
         except Exception:
             # While the user is editing numeric/color fields, temporary invalid
@@ -1650,7 +1965,13 @@ class App(tk.Tk):
         except Exception:
             pass
 
-    def start_motion_preview(self) -> None:
+    def set_motion_preview_buttons_state(self, state: str) -> None:
+        for button_name in ("motion_button_2s", "motion_button"):
+            button = getattr(self, button_name, None)
+            if button is not None:
+                button.configure(state=state)
+
+    def start_motion_preview(self, duration_override: float | None = None) -> None:
         if self.motion_thread and self.motion_thread.is_alive():
             messagebox.showinfo("Analyzing", "Please wait until the current motion preview analysis finishes.")
             return
@@ -1662,13 +1983,14 @@ class App(tk.Tk):
         self.motion_photos = []
         self._draw_canvas_message(self.motion_canvas, "Analyzing audio..." if self.current_language()=="English" else "実音源を解析しています...")
         self.motion_status.configure(text="Analyzing" if self.current_language()=="English" else "解析中")
-        self.motion_button.configure(state="disabled")
+        self.set_motion_preview_buttons_state("disabled")
         style = self.current_style()
         motion = self.current_motion()
         transform = self.current_transform()
+        post_transform = self.current_post_transform()
         auto = bool(self.vars["auto_preview_segment"].get())
         start = float(self.vars["preview_start"].get())
-        duration = float(self.vars["motion_preview_duration"].get())
+        duration = float(duration_override if duration_override is not None else self.vars["motion_preview_duration"].get())
         warmup = float(self.vars["warmup"].get())
         scan_seconds = float(self.vars["scan_seconds"].get())
 
@@ -1687,7 +2009,7 @@ class App(tk.Tk):
                     scan_seconds=scan_seconds,
                     log_callback=self.log_from_thread,
                 )
-                self.after(0, lambda v=values, st=detected_start, sty=style, tr=transform: self._load_motion_frames(v, st, sty, tr))
+                self.after(0, lambda v=values, st=detected_start, sty=style, tr=transform, post=post_transform: self._load_motion_frames(v, st, sty, tr, post))
             except Exception as exc:
                 self.log_from_thread("ERROR: " + str(exc))
                 self.after(0, lambda e=str(exc): self._motion_preview_failed(e))
@@ -1695,12 +2017,16 @@ class App(tk.Tk):
         self.motion_thread = threading.Thread(target=worker, daemon=True)
         self.motion_thread.start()
 
-    def _load_motion_frames(self, values, detected_start: float, style: RenderStyle, transform: TransformSettings | None = None) -> None:
+    def _load_motion_frames(self, values, detected_start: float, style: RenderStyle, transform: TransformSettings | None = None, post_transform: PostTransformSettings | None = None) -> None:
         try:
             frames: list[np.ndarray] = []
+            peak_values = compute_peak_hold_values(values, style, transform=transform)
+            post_applier = PostTransformApplier(post_transform, style.width, style.height, style.fps, style.background_color)
             for i, v in enumerate(values):
                 band_offset = compute_band_color_offset(i, transform.scroll_mode, transform.scroll_step_frames) if transform is not None else 0
-                frame = draw_spectrum_frame(v, style, band_color_offset=band_offset)
+                peaks = peak_values[i] if peak_values is not None else None
+                frame = draw_spectrum_frame(v, style, band_color_offset=band_offset, peak_values=peaks)
+                frame = post_applier.apply(frame, i, v)
                 frames.append(frame)
             self.motion_frames = frames
             self.motion_photos = []
@@ -1715,13 +2041,13 @@ class App(tk.Tk):
                 finally:
                     self.apply_in_progress = was_applying
             self.motion_status.configure(text=(f"Playing {detected_start:.1f}s-" if self.current_language()=="English" else f"再生中 {detected_start:.1f}s〜"))
-            self.motion_button.configure(state="normal")
+            self.set_motion_preview_buttons_state("normal")
             self._animate_motion_once()
         except Exception as exc:
             self._motion_preview_failed(str(exc))
 
     def _motion_preview_failed(self, message: str) -> None:
-        self.motion_button.configure(state="normal")
+        self.set_motion_preview_buttons_state("normal")
         self.motion_status.configure(text=("Error" if self.current_language()=="English" else "エラー"))
         self._draw_canvas_message(self.motion_canvas, f"Motion preview error: {message}")
         messagebox.showerror("Motion Preview Error", message)
@@ -1773,6 +2099,7 @@ class App(tk.Tk):
         style = self.current_style()
         motion = self.current_motion()
         transform = self.current_transform()
+        post_transform = self.current_post_transform()
         encode = self.current_encode()
         # The exported preview MP4 is intended to be placed at the beginning of
         # the editor timeline, so it is always generated from the beginning of
@@ -1783,7 +2110,7 @@ class App(tk.Tk):
         output_path = build_default_output_path(input_path, output_dir, style, preview, start, duration)
         self.preview_button.configure(state="disabled")
         self.full_button.configure(state="disabled")
-        self.motion_button.configure(state="disabled")
+        self.set_motion_preview_buttons_state("disabled")
         self.log("----------------------------------------")
         self.log("Starting render.")
 
@@ -1803,6 +2130,7 @@ class App(tk.Tk):
                     style=style,
                     motion=motion,
                     transform=transform,
+                    post_transform=post_transform,
                     encode=encode,
                     start=start,
                     duration=duration,
@@ -1826,18 +2154,18 @@ class App(tk.Tk):
     def _render_finished(self) -> None:
         self.preview_button.configure(state="normal")
         self.full_button.configure(state="normal")
-        self.motion_button.configure(state="normal")
+        self.set_motion_preview_buttons_state("normal")
 
     def open_srt_spectrum_video_composer(self) -> None:
         audio_text = self.vars["input_file"].get().strip()
         audio_path = Path(audio_text) if audio_text else None
         spectrum_path = self.last_spectrum_video_path
         mask_path = self.last_spectrum_mask_path
-        composer_path = runtime_app_dir() / COMPOSER_SCRIPT_NAME
-        if not composer_path.is_file():
+        composer_path = find_composer_script()
+        if composer_path is None and importlib.util.find_spec("final_composer") is None:
             messagebox.showerror(
                 "SRT Spectrum Video Composer",
-                f"{COMPOSER_SCRIPT_NAME} was not found.\n{composer_path}",
+                _composer_missing_message(),
             )
             return
         try:

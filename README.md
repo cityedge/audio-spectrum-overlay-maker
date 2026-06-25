@@ -1,134 +1,182 @@
-# Audio Spectrum Overlay Maker v1.2.0
+# Audio Spectrum Overlay Maker v1.3.0
 
-Audio Spectrum Overlay Maker is a local Python/Tkinter application for generating silent MP4 spectrum-analyzer overlay videos from audio files. It is designed for music videos, album artwork videos, lyric videos, and long-form YouTube workflows.
+Audio Spectrum Overlay Maker is a local Windows Python/Tkinter application for generating silent MP4 spectrum-analyzer overlay videos from audio files.
 
-Audio Spectrum Overlay Maker は、音源ファイルを解析して、音に反応するスペアナ風オーバーレイ動画を生成するローカルアプリです。標準の黒背景＋白バー素材に加え、動画編集ソフトで安定して合成するための **比較合成用ペア出力** に対応しています。
+Audio Spectrum Overlay Maker は、音源ファイルを解析して、音に反応するスペアナ風オーバーレイ動画を生成するローカルアプリです。動画編集ソフトで背景映像や字幕動画に重ねるための素材作成を目的にしています。
 
-## Key features
+## Main Features
 
-- Generate silent MP4 spectrum overlay videos from WAV / MP3 / M4A / FLAC and other ffmpeg-readable audio files.
-- Single-sided and dual-sided horizontal bar spectrum display.
-- Optional digital/LED-style segmented bar rendering with configurable segment count and pixel gap.
-- Integer band-rotation scrolling for a clear moving-spectrum feel.
-- Two-color vertical gradient, band gradient, and loop band gradient modes.
-- In-app still preview and actual-audio motion preview.
-- 30-second preview render and full-length render.
-- Optional pair output for video editors:
-  - Main video: normal spectrum material.
-  - Matte video: white background + black spectrum shape for Compare/Darken compositing.
-- Optional external handoff button for SRT Spectrum Video Composer. It passes only the audio file, main spectrum video, and matte video through a temporary JSON file; missing paths are left blank.
-- No-overwrite output naming, including paired main/matte filenames.
+- Silent MP4 spectrum overlay generation from WAV / MP3 / M4A / FLAC and other ffmpeg-readable audio files.
+- Single-sided and dual-sided bar display.
+- Digital / LED-style segmented bars.
+- Peak hold markers with configurable hold and decay.
+- Band scrolling with vertical, band, and loop-band gradients.
+- Post Transform layer applied after each frame is drawn.
+- Static rotation, vertical trapezoid, horizontal trapezoid, and combined transforms.
+- Audio-reactive scaling with peak-hold style envelope, threshold, ceiling, and optional low-band-only detection.
+- In-app still preview.
+- 2-second and 10-second in-app motion previews for quick checks.
+- 30-second preview MP4 and full-length render.
+- Optional main/matte pair output for Compare/Lighten + Compare/Darken compositing.
+- Parallel main/matte rendering when pair output is enabled.
+- SRT Spectrum Video Composer handoff through `final_composer.py`.
 - System presets and user presets.
 - Japanese / English UI.
-- Windows helper scripts: `setup.bat` and `start.bat`.
 
-## Why pair output matters
+## Typical Workflow
 
-MP4 does not provide a practical true-alpha overlay workflow for this use case. A simple black-background overlay works well with Compare/Lighten for white bars, but colored bars and bright backgrounds can be harder to composite cleanly.
+1. Select an audio file.
+2. Select an output folder.
+3. Choose a system preset or adjust the settings.
+4. Check the still preview.
+5. Use `2秒プレビュー` for quick motion checks, or `10秒プレビュー` for a longer check.
+6. Generate a 30-second preview MP4 and test compositing in your video editor.
+7. Generate the full-length spectrum video.
+8. If needed, open SRT Spectrum Video Composer and create the final video there.
 
-v1.1.1 adds pair output:
+## Pair Output
+
+MP4 does not provide a practical true-alpha workflow for this use case. Audio Spectrum Overlay Maker therefore supports paired output:
 
 ```text
-1. Put your completed base video on the timeline.
-2. Put the matte video above it and set blend mode to Compare/Darken.
-3. Put the main spectrum video above the matte and set blend mode to Compare/Lighten.
+Main video:
+  black background + normal spectrum material
+
+Matte video:
+  white background + black spectrum shape
 ```
 
-The matte video is generated from the same analyzed bar values as the main video, so timing, bar height, scrolling, and shape match frame-by-frame.
+Recommended editor stacking:
+
+```text
+Bottom: finished background video
+Middle: matte video  -> Compare/Darken
+Top:    main video   -> Compare/Lighten
+```
+
+The main and matte videos are generated from the same analyzed values and the same Post Transform settings. Bar height, peak hold, scrolling, rotation, trapezoid transforms, and audio-reactive scaling stay frame-aligned.
+
+When pair output is enabled, v1.3.0 renders the main and matte videos in parallel. Heavy Post Transform settings are still CPU-intensive, but pair output is significantly faster than rendering the two videos sequentially.
+
+## Post Transform Layer
+
+Post Transform is a coordinate-mapping layer applied after a complete RGB frame has already been drawn.
+
+```text
+audio analysis
+dynamic motion shaping
+basic drawing
+Post Transform
+ffmpeg encoding
+```
+
+Supported static transforms in v1.3.0:
+
+- Rotation around the canvas center.
+- Vertical trapezoid: negative values narrow the top, positive values narrow the bottom.
+- Horizontal trapezoid: negative values narrow the left side, positive values narrow the right side.
+- Combined trapezoid + rotation.
+- Audio-reactive scaling.
+
+The canvas size is preserved. Out-of-canvas areas are clipped. Newly exposed areas are filled with black for the main video and white for the matte video.
+
+## Audio-Reactive Scaling
+
+Audio-reactive scaling is controlled by the `音量連動の拡大` / `Audio reactive scale` checkbox.
+
+- Default: OFF.
+- Scale range: 80% to 150%.
+- 100% is neutral.
+- Values above 100% enlarge on louder input.
+- Values below 100% shrink on louder input.
+- The envelope uses peak-hold style hold/decay settings.
+- The start threshold and ceiling control how easily the maximum scale is reached.
+- Low-band-only detection is ON by default, so kick and bass energy can drive the pulse more naturally.
+
+The low-band reference range is configured in the Advanced tab. The default is 25% of the low-frequency side of the spectrum bars.
+
+## System Presets
+
+v1.3.0 includes these system presets:
+
+1. `01 Basic White`
+2. `02 Dual White`
+3. `03 Blue Gradient`
+4. `04 Neon Dual`
+5. `05 Scrolling Spectrum`
+6. `06 Smooth Ambient`
+7. `07 Digital LED`
+8. `08 Digital Dual`
+9. `09 Digital Neon Scroll`
+10. `10 Trapezoid Neon`
+11. `11 Vertical Scroll`
+12. `12 Pulsating LED Scroll`
+
+User presets are stored separately in `presets_user.json`. That file is intentionally ignored by Git.
 
 ## Requirements
 
-- Python 3.10 or later. On Windows, `setup.bat` uses the Python Launcher as `py -3`, so `py -3` must resolve to Python 3.10+.
-- `ffmpeg` and `ffprobe` available either in the app-side `bin` folder or in PATH.
-- Python packages listed in `requirements.txt`.
-- Tkinter GUI environment.
+- Windows 10 / 11.
+- Python 3.10 or later.
+- Python Launcher `py`.
+- `ffmpeg` and `ffprobe`.
+- Python packages in `requirements.txt`.
 
-## Windows quick start
+`ffmpeg` and `ffprobe` are searched in this order:
 
-1. Install Python 3.10+ and confirm `py -3 --version` reports Python 3.10 or later.
-2. Install ffmpeg and either place `ffmpeg` / `ffprobe` in the app-side `bin` folder or make them available in PATH.
-3. Double-click `setup.bat` once.
-4. Double-click `start.bat` to launch.
+1. `bin` folder next to the app files or packaged EXE.
+2. System PATH.
 
-`start.bat` will run `setup.bat` automatically if `.venv` is missing.
+The release package includes `bin\README.txt`; place `ffmpeg.exe` and `ffprobe.exe` there if you do not want to modify PATH.
 
-Manual launch:
+## Quick Start
+
+1. Extract the release zip.
+2. Put `ffmpeg.exe` and `ffprobe.exe` in `bin`, or make them available in PATH.
+3. Double-click `setup.bat`.
+4. Double-click `start.bat`.
+
+Manual launch after setup:
 
 ```bat
-py -3 app.py
+.venv\Scripts\python.exe app.py
 ```
 
-## Basic workflow
+## SRT Spectrum Video Composer
 
-1. Choose an audio file.
-2. Choose an output folder.
-3. Select or adjust a preset.
-4. Use Visual Preview and Motion Preview.
-5. Generate a 30-second preview video.
-6. Generate the full video.
-7. For cleaner compositing, enable `比較合成用マットも出力` / `Also output matte pair` before rendering.
+`final_composer.py` is bundled as SRT Spectrum Video Composer. Audio Spectrum Overlay Maker can launch it through the `SRT Spectrum Video Composer を開く` button and pass:
 
-## Digital / LED-style bars
+- source audio path
+- generated main spectrum video path
+- generated matte video path
 
-`Digital Segments` turns each bar into on/off vertical segments. Each segment is either visible or hidden; segments are never partially filled. `Segments` controls the number of divisions per bar, and `Gap px` controls the pixel gap between them. This is a drawing style only, so it works with single-sided bars, dual-sided bars, scrolling, gradients, and matte pair output.
+Background image, SRT subtitles, final output path, and layout are selected on the composer side.
 
-## SRT Spectrum Video Composer handoff
+## Package Contents
 
-If `final_composer.py` is placed next to `app.py` or the packaged EXE, the `SRT Spectrum Video Composer を開く` button opens it in a separate process. Audio Spectrum Overlay Maker does not import `final_composer.py` during normal startup. The button can be pressed before files are selected or rendered; missing file paths are written as blank values in the handoff JSON.
+The source release zip is based on the v1.3-alpha1 package layout and includes:
 
-The handoff contains only these fields:
+- `app.py`
+- `final_composer.py`
+- `preset_manager.py`
+- `spectrum_*.py`
+- `ui_tooltips.py`
+- `requirements.txt`
+- `setup.bat`
+- `start.bat`
+- `README.md`
+- `USER_GUIDE.md`
+- `USER_MANUAL_SSVC.md`
+- `CHANGELOG.md`
+- `DEVELOPMENT_NOTES.md`
+- `DEVELOPMENT_REVIEW.md`
+- `TEST_REPORT.md`
+- `RELEASE_NOTES.md`
+- `LICENSE`
+- `.gitignore`
+- `bin\README.txt`
 
-- source audio file
-- generated main spectrum video
-- generated matte video
-
-Background image, SRT file, output MP4 path, layout, and other composer-side settings are selected in SRT Spectrum Video Composer.
-
-## Output naming
-
-Normal output:
-
-```text
-song_spectrum_720x280_24bars_bw62_r18.mp4
-```
-
-Pair output:
-
-```text
-song_spectrum_720x280_24bars_bw62_r18.mp4
-song_spectrum_720x280_24bars_bw62_r18_matte_dark.mp4
-```
-
-If either the main video or the matte video already exists, both names advance together:
-
-```text
-song_spectrum_720x280_24bars_bw62_r18 (1).mp4
-song_spectrum_720x280_24bars_bw62_r18 (1)_matte_dark.mp4
-```
-
-## Files
-
-- `app.py` — GUI application.
-- `final_composer.py` — SRT Spectrum Video Composer application launched by the handoff button.
-- `spectrum_engine.py` — compatibility facade for engine APIs.
-- `spectrum_types.py` — shared dataclasses and version.
-- `spectrum_audio.py` — ffmpeg/ffprobe and audio decoding.
-- `spectrum_analysis.py` — FFT analysis and SpectrumData generation.
-- `spectrum_motion.py` — Dynamic motion shaping.
-- `spectrum_transform.py` — display-value transformation and integer scrolling.
-- `spectrum_parts.py` — visual bar-spectrum part.
-- `spectrum_primitives.py` — low-level primitive renderer.
-- `spectrum_draw.py` — drawing facade.
-- `spectrum_encoder.py` — MP4 encoder pipe.
-- `spectrum_workflow.py` — preview/full render workflows and pair output.
-- `preset_manager.py` — system/user presets.
-- `ui_tooltips.py` — tooltip helper.
-- `USER_GUIDE.md` — operation guide.
-- `USER_MANUAL_SSVC.md` — SRT Spectrum Video Composer user manual.
-- `CHANGELOG.md` — version history.
-- `DEVELOPMENT_NOTES.md` — architecture notes.
-- `TEST_REPORT.md` — release test notes.
-- `LICENSE` — MIT License.
+Generated videos, local virtual environments, user presets, caches, and ffmpeg binaries are not included.
 
 ## Privacy
 
@@ -137,16 +185,3 @@ The app runs locally. Audio files are decoded by your local ffmpeg. This applica
 ## License
 
 MIT License. See `LICENSE`.
-
-
-## ffmpeg / ffprobe lookup
-
-The app looks for ffmpeg and ffprobe in this order:
-
-1. `bin` subfolder next to the app files or EXE
-   - Windows examples:
-     - `bin\ffmpeg.exe`
-     - `bin\ffprobe.exe`
-2. System PATH
-
-This makes PyInstaller-style EXE distribution easier: you may place the ffmpeg binaries in a sibling `bin` folder next to the EXE without modifying PATH.

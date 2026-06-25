@@ -8,17 +8,19 @@ the compatibility facade in spectrum_engine.py.
 from __future__ import annotations
 
 import math
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
 
-from spectrum_types import EncodeSettings, LogFn, MotionSettings, RenderStyle, TransformSettings
+from spectrum_types import EncodeSettings, LogFn, MotionSettings, PostTransformSettings, RenderStyle, TransformSettings
 from spectrum_utils import log, unique_path
 from spectrum_audio import check_environment, decode_audio_to_float32_mono, run_ffprobe_duration
 from spectrum_analysis import analyze_spectrum_data
 from spectrum_transform import slice_spectrum_data, transform_spectrum_data
 from spectrum_encoder import render_video
+from spectrum_peak import compute_peak_hold_values
 
 def find_loud_segment_start(
     input_path: Path,
@@ -248,6 +250,7 @@ def render_audio_to_video(
     warmup: float = 0.0,
     log_callback: LogFn = None,
     transform: TransformSettings | None = None,
+    post_transform: PostTransformSettings | None = None,
     write_matte: bool = False,
 ) -> Path:
     transform = transform or TransformSettings(display_bars=style.bars)
@@ -294,10 +297,7 @@ def render_audio_to_video(
         render_frames = int(math.ceil(float(duration) * style.fps))
         data = slice_spectrum_data(data, 0, render_frames)
     bar_values = transform_spectrum_data(data, transform)
-
-    # Main output is always the user's normal spectrum material.
-    render_video(bar_values, output_path, style, encode, log_callback, transform=transform)
-    log(f"Done main: {output_path}", log_callback)
+    peak_values = compute_peak_hold_values(bar_values, style, transform=transform)
 
     if write_matte:
         assert matte_path is not None
@@ -308,9 +308,38 @@ def render_audio_to_video(
             bar_color2=(0, 0, 0),
             color_mode="vertical",
         )
-        log("Writing matte output for Compare/Darken compositing.", log_callback)
-        render_video(bar_values, matte_path, matte_style, encode, log_callback, transform=transform)
-        log(f"Done matte: {matte_path}", log_callback)
+        log("Writing main and matte outputs in parallel.", log_callback)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            main_future = executor.submit(
+                render_video,
+                bar_values,
+                output_path,
+                style,
+                encode,
+                log_callback,
+                transform,
+                post_transform,
+                peak_values,
+            )
+            matte_future = executor.submit(
+                render_video,
+                bar_values,
+                matte_path,
+                matte_style,
+                encode,
+                log_callback,
+                transform,
+                post_transform,
+                peak_values,
+            )
+            main_future.result()
+            log(f"Done main: {output_path}", log_callback)
+            matte_future.result()
+            log(f"Done matte: {matte_path}", log_callback)
+    else:
+        # Main output is always the user's normal spectrum material.
+        render_video(bar_values, output_path, style, encode, log_callback, transform=transform, post_transform=post_transform, peak_values=peak_values)
+        log(f"Done main: {output_path}", log_callback)
 
     return output_path
 

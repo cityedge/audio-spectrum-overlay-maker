@@ -7,12 +7,12 @@ encoding layers.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Tuple
 
 import numpy as np
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 RGB = Tuple[int, int, int]
 LogFn = Callable[[str], None] | None
 
@@ -35,6 +35,11 @@ class RenderStyle:
     digital_enabled: bool = False
     digital_segments: int = 16
     digital_gap_px: int = 2
+    peak_hold_enabled: bool = False
+    peak_hold_ms: int = 100
+    peak_decay_ms: int = 300
+    peak_size_percent: int = 4
+    digital_peak_segments: int = 1
     gamma: float = 0.85
 
 @dataclass
@@ -86,3 +91,36 @@ class TransformSettings:
     scroll_mode: str = "none"
     scroll_step_frames: int = 2
     scroll_offset: int = 0
+
+@dataclass
+class PostTransformModulation:
+    """Optional time modulation for future post-transform parameters."""
+    enabled: bool = False
+    amplitude: float = 0.0
+    period_seconds: float = 4.0
+    phase_degrees: float = 0.0
+
+@dataclass
+class PostTransformSettings:
+    """Coordinate mapping applied after a complete frame has been drawn.
+
+    The default is the historical identity mapping:
+    (x, y) -> (x, y).
+    """
+    transform_type: str = "none"
+    angle_degrees: float = 0.0
+    scale_percent: float = 100.0
+    audio_scale_enabled: bool = False
+    audio_scale_max_percent: float = 115.0
+    audio_scale_low_only: bool = True
+    audio_scale_low_band_percent: int = 25
+    audio_scale_floor_percent: float = 10.0
+    audio_scale_ceiling_percent: float = 50.0
+    audio_scale_hold_ms: int = 66
+    audio_scale_decay_ms: int = 167
+    trapezoid_top_scale: float = 1.0
+    trapezoid_bottom_scale: float = 1.0
+    trapezoid_vertical_percent: float = 0.0
+    trapezoid_horizontal_percent: float = 0.0
+    angle_modulation: PostTransformModulation = field(default_factory=PostTransformModulation)
+    trapezoid_modulation: PostTransformModulation = field(default_factory=PostTransformModulation)

@@ -12,9 +12,10 @@ from pathlib import Path
 
 import numpy as np
 
-from spectrum_types import EncodeSettings, LogFn, RenderStyle, TransformSettings
+from spectrum_types import EncodeSettings, LogFn, PostTransformSettings, RenderStyle, TransformSettings
 from spectrum_utils import log, no_window_subprocess_kwargs, resolve_external_tool
 from spectrum_draw import draw_spectrum_frame, compute_band_color_offset
+from spectrum_post_transform import PostTransformApplier
 
 def open_ffmpeg_encoder(output_path: Path, width: int, height: int, fps: int, encode: EncodeSettings) -> subprocess.Popen:
     cmd = [
@@ -30,20 +31,34 @@ def open_ffmpeg_encoder(output_path: Path, width: int, height: int, fps: int, en
     cmd += ["-pix_fmt", "yuv420p", "-movflags", "+faststart", str(output_path)]
     return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE, **no_window_subprocess_kwargs())
 
-def render_video(bar_values: np.ndarray, output_path: Path, style: RenderStyle, encode: EncodeSettings, log_callback: LogFn = None, transform: TransformSettings | None = None) -> None:
+def render_video(
+    bar_values: np.ndarray,
+    output_path: Path,
+    style: RenderStyle,
+    encode: EncodeSettings,
+    log_callback: LogFn = None,
+    transform: TransformSettings | None = None,
+    post_transform: PostTransformSettings | None = None,
+    peak_values: np.ndarray | None = None,
+) -> None:
     frame_count, bars = bar_values.shape
     if bars != style.bars:
         raise RuntimeError("Internal error: bar_values does not match style.bars.")
+    if peak_values is not None and peak_values.shape != bar_values.shape:
+        raise RuntimeError("Internal error: peak_values does not match bar_values.")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     log(f"Writing video: {output_path}", log_callback)
     proc = open_ffmpeg_encoder(output_path, style.width, style.height, style.fps, encode)
     if proc.stdin is None:
         raise RuntimeError("Could not open ffmpeg input pipe.")
     progress_step = max(1, frame_count // 20)
+    post_applier = PostTransformApplier(post_transform, style.width, style.height, style.fps, style.background_color)
     try:
         for i in range(frame_count):
             band_offset = compute_band_color_offset(i, transform.scroll_mode, transform.scroll_step_frames) if transform is not None else 0
-            frame = draw_spectrum_frame(bar_values[i], style, band_color_offset=band_offset)
+            peaks = peak_values[i] if peak_values is not None else None
+            frame = draw_spectrum_frame(bar_values[i], style, band_color_offset=band_offset, peak_values=peaks)
+            frame = post_applier.apply(frame, i, bar_values[i])
             proc.stdin.write(frame.tobytes())
             if frame_count >= 300 and ((i + 1) % progress_step == 0 or i + 1 == frame_count):
                 log(f"Writing: {100.0 * (i + 1) / frame_count:5.1f}%", log_callback)
