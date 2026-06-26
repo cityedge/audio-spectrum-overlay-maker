@@ -25,7 +25,7 @@ import shutil
 import subprocess
 import sys
 import threading
-from dataclasses import dataclass, asdict, fields
+from dataclasses import dataclass, asdict, field, fields
 from pathlib import Path
 from tkinter import (
     Tk, Frame, Label, Button, Entry, StringVar, IntVar, DoubleVar, BooleanVar,
@@ -405,6 +405,123 @@ def parse_srt_optional(path: str | Path) -> list[tuple[int, int, str]]:
     return parse_srt(p)
 
 
+@dataclass
+class SlideshowScene:
+    scene_id: str = ""
+    start_ms: int = 0
+    title: str = ""
+    path: str = ""
+
+
+@dataclass
+class BackgroundSettings:
+    mode: str = "single"
+    timesheet: str = ""
+    image_dir: str = ""
+    scenes: list[SlideshowScene] = field(default_factory=list)
+
+
+def parse_timesheet_time(value: str) -> int:
+    text = value.strip().replace(",", ".")
+    parts = text.split(":")
+    if len(parts) == 2:
+        minutes = int(parts[0])
+        seconds = float(parts[1])
+        return int(round((minutes * 60 + seconds) * 1000))
+    if len(parts) == 3:
+        hours = int(parts[0])
+        minutes = int(parts[1])
+        seconds = float(parts[2])
+        return int(round((hours * 3600 + minutes * 60 + seconds) * 1000))
+    raise ValueError(f"Invalid timesheet time: {value}")
+
+
+def parse_timesheet(path: str | Path) -> list[SlideshowScene]:
+    p = Path(path)
+    scenes: list[SlideshowScene] = []
+    for line_no, raw in enumerate(p.read_text(encoding="utf-8-sig").splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("\t", 2)
+        if len(parts) < 2:
+            parts = line.split(None, 2)
+        if len(parts) < 2:
+            raise ValueError(f"Invalid timesheet line {line_no}: {raw}")
+        scene_id = parts[0].strip()
+        start_ms = parse_timesheet_time(parts[1])
+        title = parts[2].strip() if len(parts) >= 3 else scene_id
+        scenes.append(SlideshowScene(scene_id=scene_id, start_ms=start_ms, title=title))
+    scenes.sort(key=lambda scene: scene.start_ms)
+    return scenes
+
+
+def format_timesheet_time(ms: int) -> str:
+    ms = max(0, int(ms))
+    minutes, rest = divmod(ms, 60_000)
+    seconds, millis = divmod(rest, 1000)
+    return f"{minutes:02d}:{seconds:02d},{millis:03d}"
+
+
+SLIDESHOW_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".webp")
+
+
+def resolve_slideshow_image(scene_id: str, image_dir: str) -> str:
+    if not scene_id or not image_dir:
+        return ""
+    folder = Path(image_dir)
+    if not folder.exists():
+        return ""
+    raw = Path(scene_id)
+    candidates: list[Path] = []
+    if raw.suffix:
+        candidates.append(folder / raw.name)
+    else:
+        candidates.extend(folder / f"{scene_id}{ext}" for ext in SLIDESHOW_IMAGE_EXTENSIONS)
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return ""
+
+
+def is_slideshow_enabled(settings: AppSettings) -> bool:
+    return settings.background.mode == "slideshow" and bool(settings.background.scenes)
+
+
+def slideshow_scenes_sorted(settings: AppSettings) -> list[SlideshowScene]:
+    return sorted(settings.background.scenes, key=lambda scene: scene.start_ms)
+
+
+def slideshow_segments_for_window(
+    settings: AppSettings,
+    window_start_ms: int,
+    duration_ms: int,
+) -> list[tuple[SlideshowScene, int, int]]:
+    scenes = slideshow_scenes_sorted(settings)
+    if not scenes or duration_ms <= 0:
+        return []
+    window_end_ms = window_start_ms + duration_ms
+    segments: list[tuple[SlideshowScene, int, int]] = []
+    for index, scene in enumerate(scenes):
+        next_start = scenes[index + 1].start_ms if index + 1 < len(scenes) else window_end_ms
+        scene_start = max(scene.start_ms, window_start_ms)
+        scene_end = min(next_start, window_end_ms)
+        if scene_end <= scene_start:
+            continue
+        segments.append((scene, scene_start - window_start_ms, scene_end - window_start_ms))
+    return segments
+
+
+def active_slideshow_scene(settings: AppSettings, time_ms: int) -> SlideshowScene | None:
+    active = None
+    for scene in slideshow_scenes_sorted(settings):
+        if scene.start_ms <= time_ms:
+            active = scene
+        else:
+            break
+    return active
+
+
 def has_existing_file(path: str) -> bool:
     return bool(path and Path(path).exists())
 
@@ -685,6 +802,7 @@ class OutputSettings:
 @dataclass
 class AppSettings:
     files: FileSettings
+    background: BackgroundSettings
     subtitle: SubtitleSettings
     title: TitleSettings
     spectrum: SpectrumSettings
@@ -698,9 +816,23 @@ def dataclass_from_dict(cls, data: dict | None):
     return cls(**{key: value for key, value in data.items() if key in valid})
 
 
+def background_settings_from_dict(data: dict | None) -> BackgroundSettings:
+    if not isinstance(data, dict):
+        return BackgroundSettings()
+    values = {key: value for key, value in data.items() if key != "scenes"}
+    settings = dataclass_from_dict(BackgroundSettings, values)
+    scenes: list[SlideshowScene] = []
+    for item in data.get("scenes", []):
+        if isinstance(item, dict):
+            scenes.append(dataclass_from_dict(SlideshowScene, item))
+    settings.scenes = scenes
+    return settings
+
+
 def app_settings_from_dict(data: dict) -> AppSettings:
     return AppSettings(
         files=dataclass_from_dict(FileSettings, data.get("files")),
+        background=background_settings_from_dict(data.get("background")),
         subtitle=dataclass_from_dict(SubtitleSettings, data.get("subtitle")),
         title=dataclass_from_dict(TitleSettings, data.get("title")),
         spectrum=dataclass_from_dict(SpectrumSettings, data.get("spectrum")),
@@ -755,6 +887,7 @@ def write_ass_items(
     sub: SubtitleSettings,
     out: OutputSettings,
     title: TitleSettings | None = None,
+    title_items: list[tuple[int, int, str]] | None = None,
 ) -> None:
     primary = hex_to_ass_color(sub.text_color, "00")
     outline = hex_to_ass_color(sub.outline_color, "00")
@@ -764,7 +897,8 @@ def write_ass_items(
 
     title_style_line = ""
     title_dialogue = ""
-    if title is not None and title.enabled and title.text.strip():
+    effective_title_items = title_items or []
+    if title is not None and title.enabled and (title.text.strip() or effective_title_items):
         title_primary = hex_to_ass_color(title.text_color, "00")
         title_outline = hex_to_ass_color(title.outline_color, "00")
         title_shadow = hex_to_ass_color("#000000", "80")
@@ -778,6 +912,18 @@ def write_ass_items(
         if title.alignment_label == "自由XY":
             title_body = rf"{{\pos({title.custom_x},{title.custom_y})}}" + title_body
         title_dialogue = f"Dialogue: 1,0:00:00.00,23:59:59.00,Title,,0,0,0,,{title_body}\n"
+        if effective_title_items:
+            timed_title_lines: list[str] = []
+            for start_ms, end_ms, text in effective_title_items:
+                if end_ms <= start_ms or not text.strip():
+                    continue
+                timed_body = ass_escape_text(text)
+                if title.alignment_label == "���RXY":
+                    timed_body = rf"{{\pos({title.custom_x},{title.custom_y})}}" + timed_body
+                timed_title_lines.append(
+                    f"Dialogue: 1,{ass_time(start_ms)},{ass_time(end_ms)},Title,,0,0,0,,{timed_body}\n"
+                )
+            title_dialogue = "".join(timed_title_lines)
 
     header = f"""[Script Info]
 ScriptType: v4.00+
@@ -809,9 +955,49 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     Path(ass_path).write_text("".join(lines), encoding="utf-8-sig")
 
 
-def generate_ass(srt_path: str, ass_path: str, sub: SubtitleSettings, title: TitleSettings, out: OutputSettings) -> None:
+def slideshow_title_items(background: BackgroundSettings, duration_ms: int) -> list[tuple[int, int, str]]:
+    items: list[tuple[int, int, str]] = []
+    scenes = sorted(background.scenes, key=lambda scene: scene.start_ms)
+    for index, scene in enumerate(scenes):
+        end_ms = scenes[index + 1].start_ms if index + 1 < len(scenes) else duration_ms
+        if end_ms > scene.start_ms and scene.title.strip():
+            items.append((scene.start_ms, end_ms, scene.title))
+    return items
+
+
+def slideshow_preview_title_items(
+    background: BackgroundSettings,
+    start_ms: int,
+    duration_ms: int,
+) -> list[tuple[int, int, str]]:
+    end_ms = start_ms + duration_ms
+    items: list[tuple[int, int, str]] = []
+    scenes = sorted(background.scenes, key=lambda scene: scene.start_ms)
+    for index, scene in enumerate(scenes):
+        scene_end = scenes[index + 1].start_ms if index + 1 < len(scenes) else end_ms
+        if scene_end <= start_ms or scene.start_ms >= end_ms:
+            continue
+        dst_start = max(0, scene.start_ms - start_ms)
+        dst_end = min(duration_ms, scene_end - start_ms)
+        if dst_end > dst_start and scene.title.strip():
+            items.append((dst_start, dst_end, scene.title))
+    return items
+
+
+def generate_ass(
+    srt_path: str,
+    ass_path: str,
+    sub: SubtitleSettings,
+    title: TitleSettings,
+    out: OutputSettings,
+    background: BackgroundSettings | None = None,
+    duration_ms: int | None = None,
+) -> None:
     items = parse_srt_optional(srt_path)
-    write_ass_items(items, ass_path, sub, out, title)
+    title_items = None
+    if background is not None and background.mode == "slideshow" and duration_ms is not None:
+        title_items = slideshow_title_items(background, duration_ms)
+    write_ass_items(items, ass_path, sub, out, title, title_items=title_items)
 
 
 def generate_preview_ass_static(
@@ -822,6 +1008,7 @@ def generate_preview_ass_static(
     out: OutputSettings,
     preview_ms: int,
     selected_index: int | None = None,
+    background: BackgroundSettings | None = None,
 ) -> None:
     """Create a temporary ASS that displays the selected/active subtitle at t=0."""
     items = parse_srt_optional(srt_path)
@@ -833,7 +1020,17 @@ def generate_preview_ass_static(
         for start_ms, end_ms, text in items:
             if start_ms <= preview_ms < end_ms:
                 preview_items.append((0, 10000, text))
-    write_ass_items(preview_items, ass_path, sub, out, title)
+    title_items = None
+    if background is not None and background.mode == "slideshow":
+        active = None
+        for scene in sorted(background.scenes, key=lambda item: item.start_ms):
+            if scene.start_ms <= preview_ms:
+                active = scene
+            else:
+                break
+        if active is not None and active.title.strip():
+            title_items = [(0, 10000, active.title)]
+    write_ass_items(preview_items, ass_path, sub, out, title, title_items=title_items)
 
 
 def generate_preview_ass_segment(
@@ -844,6 +1041,7 @@ def generate_preview_ass_segment(
     out: OutputSettings,
     start_ms: int,
     duration_ms: int,
+    background: BackgroundSettings | None = None,
 ) -> None:
     """Create a temporary ASS shifted to a short preview segment starting at 0."""
     items = parse_srt_optional(srt_path)
@@ -856,7 +1054,10 @@ def generate_preview_ass_segment(
         dst_end = min(duration_ms, src_end - start_ms)
         if dst_end > dst_start:
             preview_items.append((dst_start, dst_end, text))
-    write_ass_items(preview_items, ass_path, sub, out, title)
+    title_items = None
+    if background is not None and background.mode == "slideshow":
+        title_items = slideshow_preview_title_items(background, start_ms, duration_ms)
+    write_ass_items(preview_items, ass_path, sub, out, title, title_items=title_items)
 
 def optional_flip_chain(label_in: str, spec: SpectrumSettings, label_out: str) -> str:
     filters = []
@@ -903,6 +1104,60 @@ def build_background_chain(settings: AppSettings) -> str:
     )
 
 
+def background_video_filter(settings: AppSettings, input_index: int, duration_ms: int, label: str) -> str:
+    out = settings.output
+    duration = format_duration_seconds(max(1, duration_ms) / 1000.0)
+    if out.background_native_size:
+        chain = f"[{input_index}:v]setsar=1,fps={out.fps},format=rgba"
+    else:
+        chain = (
+            f"[{input_index}:v]scale=w={out.width}:h={out.height}:force_original_aspect_ratio=increase:flags=lanczos,"
+            f"crop={out.width}:{out.height},setsar=1,fps={out.fps},format=rgba"
+        )
+    return f"{chain},trim=duration={duration},setpts=PTS-STARTPTS[{label}];"
+
+
+def build_slideshow_background_inputs_and_chain(
+    settings: AppSettings,
+    window_start_ms: int,
+    duration_ms: int,
+) -> tuple[list[str], str, int]:
+    segments = slideshow_segments_for_window(settings, window_start_ms, duration_ms)
+    if not segments:
+        return [], "", 0
+
+    args: list[str] = []
+    filters: list[str] = []
+    concat_inputs: list[str] = []
+    input_index = 0
+    for index, (scene, _seg_start, seg_end) in enumerate(segments):
+        seg_start = segments[index][1]
+        seg_duration_ms = max(1, seg_end - seg_start)
+        label = f"bgseg{index}"
+        if scene.path:
+            args.extend([
+                "-loop", "1",
+                "-framerate", str(settings.output.fps),
+                "-t", format_duration_seconds(seg_duration_ms / 1000.0),
+                "-i", scene.path,
+            ])
+            filters.append(background_video_filter(settings, input_index, seg_duration_ms, label))
+            input_index += 1
+        else:
+            duration = format_duration_seconds(seg_duration_ms / 1000.0)
+            filters.append(
+                f"color=c=black:s={settings.output.width}x{settings.output.height}:r={settings.output.fps},"
+                f"format=rgba,trim=duration={duration},setpts=PTS-STARTPTS[{label}];"
+            )
+        concat_inputs.append(f"[{label}]")
+
+    if len(concat_inputs) == 1:
+        filters.append(f"{concat_inputs[0]}null[bg];")
+    else:
+        filters.append(f"{''.join(concat_inputs)}concat=n={len(concat_inputs)}:v=1:a=0[bg];")
+    return args, "".join(filters), input_index
+
+
 def build_visual_filter_complex(
     settings: AppSettings,
     ass_path: str,
@@ -912,13 +1167,14 @@ def build_visual_filter_complex(
     final_scale: tuple[int, int] | None = None,
     reset_overlay_pts: bool = False,
     duration_sec: float | None = None,
+    background_chain: str | None = None,
 ) -> str:
     out = settings.output
     spec = settings.spectrum
     sub_filter = f"subtitles={normalize_path_for_filter(ass_path)}"
     opacity_factor = spectrum_opacity_factor(spec)
 
-    bg = build_background_chain(settings)
+    bg = background_chain or build_background_chain(settings)
 
     def finish(label: str) -> str:
         tail = "null"
@@ -1045,17 +1301,39 @@ def build_ffmpeg_command(settings: AppSettings, ass_path: str) -> list[str]:
     mode = effective_compose_mode(settings)
     audio_duration = probe_media_duration(files.audio)
     duration_arg = format_duration_seconds(audio_duration)
-    fc = build_filter_complex(settings, ass_path, duration_sec=audio_duration)
+    background_args: list[str]
+    background_chain: str | None = None
+    if is_slideshow_enabled(settings):
+        background_args, background_chain, background_input_count = build_slideshow_background_inputs_and_chain(
+            settings,
+            0,
+            int(round(audio_duration * 1000)),
+        )
+    else:
+        background_args = [
+            "-loop", "1",
+            "-framerate", str(out.fps),
+            "-i", files.background,
+        ]
+        background_input_count = 1
+    audio_index = background_input_count
+    spectrum_index = audio_index + 1 if mode is not None else None
+    mask_index = audio_index + 2 if mode in ("mask_alpha", "darken_lighten_experimental") else None
+    fc = build_visual_filter_complex(
+        settings,
+        ass_path,
+        spectrum_index=spectrum_index,
+        mask_index=mask_index,
+        out_label="outv",
+        duration_sec=audio_duration,
+        background_chain=background_chain,
+    )
 
     cmd = [
         ffmpeg,
         "-y",
         "-hide_banner",
-        "-loop", "1",
-        "-framerate", str(out.fps),
-        "-i", files.background,
-        "-i", files.audio,
-    ]
+    ] + background_args + ["-i", files.audio]
     if mode is not None:
         cmd += ["-i", files.spectrum_color]
     if mode in ("mask_alpha", "darken_lighten_experimental"):
@@ -1064,7 +1342,7 @@ def build_ffmpeg_command(settings: AppSettings, ass_path: str) -> list[str]:
     cmd += [
         "-filter_complex", fc,
         "-map", "[outv]",
-        "-map", "1:a:0",
+        "-map", f"{audio_index}:a:0",
         "-t", duration_arg,
         "-af", f"atrim=duration={duration_arg},asetpts=PTS-STARTPTS",
         "-c:v", "libx264",
@@ -1098,23 +1376,37 @@ def build_preview_png_command(settings: AppSettings, ass_path: str, preview_path
     pw, ph = fit_size(settings.output.width, settings.output.height, 1280, 720)
     if settings.output.height > settings.output.width:
         pw, ph = fit_size(settings.output.width, settings.output.height, 720, 1280)
+    if is_slideshow_enabled(settings):
+        background_args, background_chain, background_input_count = build_slideshow_background_inputs_and_chain(
+            settings,
+            int(round(preview_sec * 1000)),
+            1000,
+        )
+    else:
+        background_args = [
+            "-loop", "1",
+            "-framerate", str(settings.output.fps),
+            "-i", files.background,
+        ]
+        background_chain = None
+        background_input_count = 1
+    spectrum_index = background_input_count if mode is not None else None
+    mask_index = background_input_count + 1 if mode in ("mask_alpha", "darken_lighten_experimental") else None
     fc = build_visual_filter_complex(
         settings,
         ass_path,
-        spectrum_index=1 if mode is not None else None,
-        mask_index=2 if mode in ("mask_alpha", "darken_lighten_experimental") else None,
+        spectrum_index=spectrum_index,
+        mask_index=mask_index,
         out_label="previewv",
         final_scale=(pw, ph),
         reset_overlay_pts=True,
+        background_chain=background_chain,
     )
     cmd = [
         ffmpeg,
         "-y",
         "-hide_banner",
-        "-loop", "1",
-        "-framerate", str(settings.output.fps),
-        "-i", files.background,
-    ]
+    ] + background_args
     if mode is not None:
         cmd += ["-ss", f"{preview_sec:.3f}", "-i", files.spectrum_color]
     if mode in ("mask_alpha", "darken_lighten_experimental"):
@@ -1137,23 +1429,41 @@ def build_preview_video_command(settings: AppSettings, ass_path: str, preview_pa
     # Use a taller box for vertical formats to preserve usable preview size.
     if settings.output.height > settings.output.width:
         pw, ph = fit_size(settings.output.width, settings.output.height, 540, 960)
+    start_ms = int(round(start_sec * 1000))
+    duration_ms = int(round(duration_sec * 1000))
+    if is_slideshow_enabled(settings):
+        background_args, background_chain, background_input_count = build_slideshow_background_inputs_and_chain(
+            settings,
+            start_ms,
+            duration_ms,
+        )
+    else:
+        background_args = [
+            "-loop", "1",
+            "-framerate", str(settings.output.fps),
+            "-t", f"{duration_sec:.3f}",
+            "-i", files.background,
+        ]
+        background_chain = None
+        background_input_count = 1
+    audio_index = background_input_count
+    spectrum_index = audio_index + 1 if mode is not None else None
+    mask_index = audio_index + 2 if mode in ("mask_alpha", "darken_lighten_experimental") else None
     fc = build_visual_filter_complex(
         settings,
         ass_path,
-        spectrum_index=2 if mode is not None else None,
-        mask_index=3 if mode in ("mask_alpha", "darken_lighten_experimental") else None,
+        spectrum_index=spectrum_index,
+        mask_index=mask_index,
         out_label="previewv",
         final_scale=(pw, ph),
         reset_overlay_pts=True,
+        background_chain=background_chain,
     )
     cmd = [
         ffmpeg,
         "-y",
         "-hide_banner",
-        "-loop", "1",
-        "-framerate", str(settings.output.fps),
-        "-t", f"{duration_sec:.3f}",
-        "-i", files.background,
+    ] + background_args + [
         "-ss", f"{start_sec:.3f}",
         "-t", f"{duration_sec:.3f}",
         "-i", files.audio,
@@ -1165,7 +1475,7 @@ def build_preview_video_command(settings: AppSettings, ass_path: str, preview_pa
     cmd += [
         "-filter_complex", fc,
         "-map", "[previewv]",
-        "-map", "1:a:0",
+        "-map", f"{audio_index}:a:0",
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",
         "-preset", "ultrafast",
@@ -1185,10 +1495,30 @@ def validate_settings(settings: AppSettings) -> None:
         "背景画像": files.background,
         "音源": files.audio,
     }
+    if is_slideshow_enabled(settings):
+        background_key = next(iter(required_inputs), None)
+        if background_key is not None:
+            required_inputs.pop(background_key, None)
 
     missing = [name for name, path in required_inputs.items() if not path or not Path(path).exists()]
     if missing:
         raise FileNotFoundError("必要な入力ファイルが見つかりません: " + ", ".join(missing))
+
+    if is_slideshow_enabled(settings):
+        bad_times = [
+            scene.scene_id or str(index + 1)
+            for index, scene in enumerate(settings.background.scenes)
+            if scene.start_ms < 0
+        ]
+        if bad_times:
+            raise ValueError("Invalid slideshow start time: " + ", ".join(bad_times))
+        bad_scenes = [
+            scene.scene_id or str(index + 1)
+            for index, scene in enumerate(settings.background.scenes)
+            if scene.path and not Path(scene.path).exists()
+        ]
+        if bad_scenes:
+            raise FileNotFoundError("Slideshow image file not found: " + ", ".join(bad_scenes))
 
     # Optional files are validated only when specified.
     optional_inputs = {
@@ -1240,12 +1570,15 @@ class App(Tk):
         self.output_auto_generated = False
         self.title_auto_generated = False
         self.srt_items: list[tuple[int, int, str]] = []
+        self.slideshow_scenes: list[SlideshowScene] = []
         self.preview_photo = None
         self.ui_thread_id = threading.get_ident()
         self._pane_configure_bound = False
         self._layout_resolution: tuple[int, int] | None = None
 
         self.vars = self._create_vars()
+        self.slideshow_row_vars: list[dict[str, StringVar]] = []
+        self.slideshow_thumbnails: dict[int, object] = {}
         self._build_ui()
         self._apply_initial_system_presets()
         self._update_resolution_from_preset()
@@ -1259,6 +1592,10 @@ class App(Tk):
             "language": StringVar(value="ja"),
             "language_label": StringVar(value=LANGUAGES["ja"]),
             "background": StringVar(),
+            "background_mode": StringVar(value="single"),
+            "slideshow_enabled": BooleanVar(value=False),
+            "slideshow_image_count": IntVar(value=2),
+            "timesheet": StringVar(),
             "audio": StringVar(),
             "srt": StringVar(),
             "spectrum_color": StringVar(),
@@ -1394,6 +1731,7 @@ class App(Tk):
         self._build_spectrum_tab()
         self._build_subtitle_tab()
         self._build_srt_tab()
+        self._build_slideshow_tab()
         self._build_output_tab()
 
         self.preview = Canvas(right, bg="#202020", width=420, height=270, highlightthickness=1, highlightbackground="#666")
@@ -1499,6 +1837,210 @@ class App(Tk):
             self.add_tip(ent, tip_key)
             self.add_tip(btn, tip_key)
 
+    def _ensure_slideshow_row_vars(self, count: int | None = None) -> None:
+        if count is None:
+            count = int(self.vars["slideshow_image_count"].get())
+        count = max(2, min(20, int(count)))
+        while len(self.slideshow_row_vars) < count:
+            index = len(self.slideshow_row_vars)
+            self.slideshow_row_vars.append({
+                "start": StringVar(value="00:00,000" if index == 0 else ""),
+                "title": StringVar(),
+                "path": StringVar(),
+            })
+        if len(self.slideshow_row_vars) > count:
+            self.slideshow_row_vars = self.slideshow_row_vars[:count]
+        if self.slideshow_row_vars:
+            self.slideshow_row_vars[0]["start"].set("00:00,000")
+
+    def _build_slideshow_tab(self) -> None:
+        f = Frame(self.notebook)
+        self.notebook.add(f, text="紙芝居")
+        f.columnconfigure(0, weight=1)
+        f.rowconfigure(2, weight=1)
+
+        top = Frame(f)
+        top.grid(row=0, column=0, sticky="ew", padx=8, pady=8)
+        top.columnconfigure(0, weight=1)
+
+        chk = ttk.Checkbutton(
+            top,
+            text="紙芝居モード",
+            variable=self.vars["slideshow_enabled"],
+            command=self._on_slideshow_enabled_changed,
+        )
+        chk.grid(row=0, column=0, sticky="w", pady=(0, 6))
+        Button(top, text="タイムシートの読み込み", command=self.pick_timesheet).grid(row=1, column=0, sticky="w", pady=(0, 6))
+        Label(top, text="画像数", anchor="w").grid(row=2, column=0, sticky="w")
+        count_cb = ttk.Combobox(
+            top,
+            textvariable=self.vars["slideshow_image_count"],
+            values=list(range(2, 21)),
+            state="readonly",
+            width=5,
+        )
+        count_cb.grid(row=3, column=0, sticky="w", pady=(0, 6))
+        count_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_slideshow_count_changed())
+        Label(top, text="タイムシート", anchor="w").grid(row=4, column=0, sticky="w")
+        Entry(top, textvariable=self.vars["timesheet"]).grid(row=5, column=0, sticky="ew", pady=(0, 4))
+
+        note = (
+            "紙芝居モードでは、ファイルタブの背景画像とタイトルタブのタイトル文字列をこのタブの設定で上書きします。"
+            " タイトルのフォント、サイズ、位置などはタイトルタブの設定を使います。"
+        )
+        Label(f, text=note, anchor="w", justify="left", wraplength=760, foreground="#555555").grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 6))
+
+        canvas = Canvas(f, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(f, orient="vertical", command=canvas.yview)
+        rows = Frame(canvas)
+        rows.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        rows_window = canvas.create_window((0, 0), window=rows, anchor="nw")
+        canvas.bind("<Configure>", lambda e, item=rows_window: canvas.itemconfigure(item, width=e.width))
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.grid(row=2, column=0, sticky="nsew", padx=(8, 0), pady=(0, 8))
+        scrollbar.grid(row=2, column=1, sticky="ns", pady=(0, 8))
+        self.slideshow_rows_frame = rows
+        self._rebuild_slideshow_rows()
+
+    def _on_slideshow_enabled_changed(self) -> None:
+        self.vars["background_mode"].set("slideshow" if bool(self.vars["slideshow_enabled"].get()) else "single")
+        self._draw_preview()
+
+    def _on_slideshow_count_changed(self) -> None:
+        self._ensure_slideshow_row_vars()
+        self._rebuild_slideshow_rows()
+        self._draw_preview()
+
+    def _rebuild_slideshow_rows(self) -> None:
+        rows = getattr(self, "slideshow_rows_frame", None)
+        if rows is None:
+            return
+        for child in rows.winfo_children():
+            child.destroy()
+        self._ensure_slideshow_row_vars()
+        rows.columnconfigure(0, weight=1)
+        count = int(self.vars["slideshow_image_count"].get())
+        for index in range(count):
+            row_vars = self.slideshow_row_vars[index]
+            scene_id = f"{index + 1:02d}"
+            scene = ttk.LabelFrame(rows, text=f"{scene_id}")
+            scene.grid(row=index, column=0, sticky="ew", padx=4, pady=(0, 12))
+            scene.columnconfigure(0, weight=1)
+
+            Label(scene, text="番号", anchor="w").grid(row=0, column=0, sticky="w", padx=8, pady=(6, 2))
+            Label(scene, text=scene_id, anchor="w").grid(row=1, column=0, sticky="w", padx=8, pady=(0, 6))
+
+            Label(scene, text="開始時間", anchor="w").grid(row=2, column=0, sticky="w", padx=8, pady=(0, 2))
+            start_entry = Entry(scene, textvariable=row_vars["start"], width=14)
+            if index == 0:
+                row_vars["start"].set("00:00,000")
+                start_entry.configure(state="readonly")
+            start_entry.grid(row=3, column=0, sticky="w", padx=8, pady=(0, 6))
+            start_entry.bind("<FocusOut>", lambda _e: self._draw_preview())
+
+            Label(scene, text="タイトル", anchor="w").grid(row=4, column=0, sticky="w", padx=8, pady=(0, 2))
+            title_entry = Entry(scene, textvariable=row_vars["title"])
+            title_entry.grid(row=5, column=0, sticky="ew", padx=8, pady=(0, 6))
+            title_entry.bind("<FocusOut>", lambda _e: self._draw_preview())
+
+            Label(scene, text="画像ファイル", anchor="w").grid(row=6, column=0, sticky="w", padx=8, pady=(0, 2))
+            image_row = Frame(scene)
+            image_row.grid(row=7, column=0, sticky="ew", padx=8, pady=(0, 8))
+            image_row.columnconfigure(0, weight=1)
+            path_entry = Entry(image_row, textvariable=row_vars["path"])
+            path_entry.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+            Button(image_row, text="選択", command=lambda i=index: self.pick_slideshow_image(i)).grid(row=0, column=1, sticky="e")
+
+            Label(scene, text="サムネイル", anchor="w").grid(row=8, column=0, sticky="w", padx=8, pady=(0, 2))
+            thumb_box = Frame(scene, width=220, height=128, borderwidth=1, relief="sunken", bg="#202020")
+            thumb_box.grid(row=9, column=0, sticky="w", padx=8, pady=(0, 8))
+            thumb_box.grid_propagate(False)
+            thumb = Label(thumb_box, text="", anchor="center", bg="#202020")
+            thumb.place(relx=0.5, rely=0.5, anchor="center")
+            self._update_slideshow_thumbnail(index, thumb)
+
+    def _sync_slideshow_scenes_from_rows(self) -> None:
+        self._ensure_slideshow_row_vars()
+        count = int(self.vars["slideshow_image_count"].get())
+        scenes: list[SlideshowScene] = []
+        for index in range(count):
+            row_vars = self.slideshow_row_vars[index]
+            start_text = "00:00,000" if index == 0 else row_vars["start"].get().strip()
+            try:
+                start_ms = parse_timesheet_time(start_text)
+            except Exception:
+                start_ms = -1
+            scenes.append(SlideshowScene(
+                scene_id=f"{index + 1:02d}",
+                start_ms=start_ms,
+                title=row_vars["title"].get(),
+                path=row_vars["path"].get(),
+            ))
+        self.slideshow_scenes = scenes
+
+    def _load_slideshow_scenes_to_rows(self) -> None:
+        count = max(2, min(20, len(self.slideshow_scenes) or int(self.vars["slideshow_image_count"].get())))
+        self.vars["slideshow_image_count"].set(count)
+        self._ensure_slideshow_row_vars(count)
+        for index, scene in enumerate(self.slideshow_scenes[:count]):
+            self.slideshow_row_vars[index]["start"].set("00:00,000" if index == 0 else format_timesheet_time(scene.start_ms))
+            self.slideshow_row_vars[index]["title"].set(scene.title)
+            self.slideshow_row_vars[index]["path"].set(scene.path)
+        for index in range(len(self.slideshow_scenes), count):
+            self.slideshow_row_vars[index]["start"].set("00:00,000" if index == 0 else "")
+            self.slideshow_row_vars[index]["title"].set("")
+            self.slideshow_row_vars[index]["path"].set("")
+        self._rebuild_slideshow_rows()
+
+    def pick_timesheet(self) -> None:
+        path = filedialog.askopenfilename(filetypes=[("Text", "*.txt *.tsv"), ("All", "*.*")])
+        if not path:
+            return
+        try:
+            scenes = parse_timesheet(path)
+        except Exception as exc:
+            messagebox.showerror("Timesheet error", str(exc))
+            return
+        count = max(2, min(20, len(scenes)))
+        self.vars["timesheet"].set(path)
+        self.vars["slideshow_enabled"].set(True)
+        self.vars["background_mode"].set("slideshow")
+        self.vars["slideshow_image_count"].set(count)
+        self._ensure_slideshow_row_vars(count)
+        for index in range(count):
+            scene = scenes[index] if index < len(scenes) else SlideshowScene(scene_id=f"{index + 1:02d}")
+            self.slideshow_row_vars[index]["start"].set("00:00,000" if index == 0 else format_timesheet_time(scene.start_ms))
+            self.slideshow_row_vars[index]["title"].set(scene.title)
+        self._sync_slideshow_scenes_from_rows()
+        self._rebuild_slideshow_rows()
+        self._draw_preview()
+
+    def pick_slideshow_image(self, index: int) -> None:
+        if not (0 <= index < len(self.slideshow_row_vars)):
+            return
+        path = filedialog.askopenfilename(filetypes=[("Images", "*.jpg *.jpeg *.png *.bmp *.webp"), ("All", "*.*")])
+        if not path:
+            return
+        self.slideshow_row_vars[index]["path"].set(path)
+        self._sync_slideshow_scenes_from_rows()
+        self._rebuild_slideshow_rows()
+        self._draw_preview()
+
+    def _update_slideshow_thumbnail(self, index: int, label: Label) -> None:
+        path = self.slideshow_row_vars[index]["path"].get().strip() if index < len(self.slideshow_row_vars) else ""
+        if not path or not Path(path).exists() or Image is None or ImageTk is None:
+            label.configure(image="", text="No image", fg="#dddddd")
+            return
+        try:
+            with Image.open(path) as im:
+                im = im.convert("RGB")
+                im.thumbnail((210, 118), Image.LANCZOS)
+                photo = ImageTk.PhotoImage(im)
+            self.slideshow_thumbnails[index] = photo
+            label.configure(image=photo, text="")
+        except Exception:
+            label.configure(image="", text="Preview error", fg="#dddddd")
+
     def _available_fonts(self) -> list[str]:
         """Return a sorted list of system font family names for the font selector."""
         try:
@@ -1511,6 +2053,15 @@ class App(Tk):
             if name and name not in merged:
                 merged.append(name)
         return merged
+
+    def _background_reference_path(self) -> str:
+        if bool(self.vars["slideshow_enabled"].get()):
+            self._sync_slideshow_scenes_from_rows()
+            for scene in self.slideshow_scenes:
+                if scene.path:
+                    return scene.path
+            return ""
+        return self.vars["background"].get().strip()
 
     def _color_button_text(self, key: str) -> str:
         value = self.vars[key].get()
@@ -1763,7 +2314,7 @@ class App(Tk):
         return bool(size and size[0] >= OUTPUT_MIN_WIDTH and size[1] >= OUTPUT_MIN_HEIGHT)
 
     def _preview_info_text(self, out_w: int, out_h: int) -> str:
-        bg_size = get_image_size(self.vars["background"].get().strip())
+        bg_size = get_image_size(self._background_reference_path())
         src = f"{bg_size[0]}x{bg_size[1]}" if bg_size else "不明"
         return f"出力: {out_w}x{out_h}  元画像: {src}"
 
@@ -2811,7 +3362,7 @@ class App(Tk):
     def _update_resolution_from_preset(self) -> None:
         preset = self.vars["resolution_preset"].get()
         if preset == BACKGROUND_SIZE_PRESET:
-            size = get_image_size(self.vars["background"].get().strip())
+            size = get_image_size(self._background_reference_path())
             if size:
                 if not self._is_output_size_usable(size):
                     messagebox.showerror(
@@ -2848,12 +3399,14 @@ class App(Tk):
         mode_label = getattr(self, "compose_mode_label_var", None)
         if mode_label is not None:
             self.vars["compose_mode"].set(self.mode_label_to_key.get(mode_label.get(), "mask_alpha"))
+        self.vars["background_mode"].set("slideshow" if bool(self.vars["slideshow_enabled"].get()) else "single")
+        self._sync_slideshow_scenes_from_rows()
         self._auto_fill_output_from_audio()
         normalized_output = normalize_output_path(self.vars["output"].get().strip())
         if normalized_output != self.vars["output"].get().strip():
             self.vars["output"].set(normalized_output)
         if self.vars["resolution_preset"].get() == BACKGROUND_SIZE_PRESET:
-            size = get_image_size(self.vars["background"].get().strip())
+            size = get_image_size(self._background_reference_path())
             if size:
                 self.vars["out_w"].set(size[0])
                 self.vars["out_h"].set(size[1])
@@ -2868,6 +3421,12 @@ class App(Tk):
                 spectrum_color=self.vars["spectrum_color"].get(),
                 spectrum_mask=self.vars["spectrum_mask"].get(),
                 output=self.vars["output"].get(),
+            ),
+            background=BackgroundSettings(
+                mode="slideshow" if bool(self.vars["slideshow_enabled"].get()) else "single",
+                timesheet=self.vars["timesheet"].get(),
+                image_dir="",
+                scenes=[dataclass_from_dict(SlideshowScene, asdict(scene)) for scene in self.slideshow_scenes],
             ),
             subtitle=SubtitleSettings(
                 font_name=self.vars["font_name"].get(),
@@ -2935,6 +3494,14 @@ class App(Tk):
         self.vars["spectrum_color"].set(settings.files.spectrum_color)
         self.vars["spectrum_mask"].set(settings.files.spectrum_mask)
         self.vars["output"].set(settings.files.output)
+        background_mode = getattr(settings.background, "mode", "single")
+        self.vars["background_mode"].set(background_mode)
+        self.vars["slideshow_enabled"].set(background_mode == "slideshow")
+        self.vars["timesheet"].set(getattr(settings.background, "timesheet", ""))
+        self.slideshow_scenes = [
+            dataclass_from_dict(SlideshowScene, asdict(scene)) for scene in getattr(settings.background, "scenes", [])
+        ]
+        self._load_slideshow_scenes_to_rows()
         self._load_srt_items(show_message=False)
         self.output_auto_generated = False
         if not settings.files.output and settings.files.audio:
@@ -3125,6 +3692,15 @@ class App(Tk):
         # Background image preview. This is a UI-only preview and uses the same
         # cover/crop idea as the FFmpeg background filter.
         bg_path = self.vars["background"].get().strip()
+        active_scene = None
+        if bool(self.vars["slideshow_enabled"].get()):
+            try:
+                preview_ms = int(float(self.vars["preview_time"].get()) * 1000)
+            except Exception:
+                preview_ms = 0
+            active_scene = active_slideshow_scene(self._settings(), preview_ms)
+            if active_scene is not None and active_scene.path:
+                bg_path = active_scene.path
         bg_drawn = False
         if bg_path and Path(bg_path).exists() and Image is not None and ImageTk is not None:
             try:
@@ -3164,8 +3740,11 @@ class App(Tk):
             c.create_text((x1 + x2) / 2, (y1 + y2) / 2, text="Spectrum", fill="#00ccff")
 
         # Title preview. This is approximate, but follows the same anchor idea as ASS.
-        if bool(self.vars["title_enabled"].get()) and self.vars["title_text"].get().strip():
-            title_text = self.vars["title_text"].get().strip()
+        title_preview_text = self.vars["title_text"].get().strip()
+        if active_scene is not None and active_scene.title.strip():
+            title_preview_text = active_scene.title.strip()
+        if bool(self.vars["title_enabled"].get()) and title_preview_text:
+            title_text = title_preview_text
             t_align = self.vars["title_alignment_label"].get()
             t_size = int(self.vars["title_font_size"].get())
             margin_x = int(self.vars["title_margin_x"].get())
@@ -3264,6 +3843,7 @@ class App(Tk):
                 settings.output,
                 int(preview_sec * 1000),
                 selected_index=selected_index,
+                background=settings.background,
             )
             cmd = build_preview_png_command(settings, ass_path, preview_path, preview_sec)
             self.append_log("\n=== 静止画プレビュー生成 ===\n")
@@ -3366,6 +3946,7 @@ class App(Tk):
                 settings.output,
                 int(start_sec * 1000),
                 int(duration_sec * 1000),
+                background=settings.background,
             )
             cmd = build_preview_video_command(settings, ass_path, preview_path, start_sec, duration_sec)
             self.append_log("\n=== 動画プレビュー生成 ===\n")
@@ -3412,7 +3993,16 @@ class App(Tk):
             validate_settings(settings)
             self.vars["output"].set(settings.files.output)
             ass_path = str(WORK_DIR / "subtitle_preview.ass")
-            generate_ass(settings.files.srt, ass_path, settings.subtitle, settings.title, settings.output)
+            duration_ms = int(round(probe_media_duration(settings.files.audio) * 1000))
+            generate_ass(
+                settings.files.srt,
+                ass_path,
+                settings.subtitle,
+                settings.title,
+                settings.output,
+                background=settings.background,
+                duration_ms=duration_ms,
+            )
             cmd = build_ffmpeg_command(settings, ass_path)
             self.append_log("\n--- FFmpeg command ---\n")
             self.append_log(subprocess.list2cmdline(cmd) + "\n")
@@ -3458,7 +4048,16 @@ class App(Tk):
     def _render_worker(self, settings: AppSettings) -> None:
         try:
             ass_path = str(WORK_DIR / "subtitle.ass")
-            generate_ass(settings.files.srt, ass_path, settings.subtitle, settings.title, settings.output)
+            duration_ms = int(round(probe_media_duration(settings.files.audio) * 1000))
+            generate_ass(
+                settings.files.srt,
+                ass_path,
+                settings.subtitle,
+                settings.title,
+                settings.output,
+                background=settings.background,
+                duration_ms=duration_ms,
+            )
             cmd = build_ffmpeg_command(settings, ass_path)
             self.append_log("\n=== レンダー開始 ===\n")
             self.append_log(subprocess.list2cmdline(cmd) + "\n\n")
