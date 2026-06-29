@@ -50,6 +50,7 @@ LEGACY_HANDOFF_TYPES = {"spectrum_maker_to_final_composer"}
 BACKGROUND_SIZE_PRESET = "背景画像と同じサイズ / Background size"
 OUTPUT_MIN_WIDTH = 320
 OUTPUT_MIN_HEIGHT = 240
+NO_WINDOW_SUBPROCESS_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
 
 VIDEO_PRESETS = {
     BACKGROUND_SIZE_PRESET: None,
@@ -110,6 +111,7 @@ LANGUAGE_LABEL_TO_KEY = {v: k for k, v in LANGUAGES.items()}
 TRANSLATIONS = {
     "ja": {
         "tab_files": "ファイル", "tab_srt": "字幕行", "tab_title": "タイトル", "tab_subtitle": "字幕",
+        "tab_slideshow": "紙芝居",
         "tab_spectrum": "スペアナ", "tab_output": "出力", "tab_advanced": "詳細", "tab_presets": "プリセット",
         "language": "言語／Language", "background": "背景画像", "audio": "音源", "srt": "SRT字幕",
         "spectrum_color": "カラースペアナ", "spectrum_mask": "マスク動画", "output_mp4": "出力MP4",
@@ -138,9 +140,17 @@ TRANSLATIONS = {
         "preset_note": "システムプリセットは編集・削除できません。ユーザープリセットは素材ファイルパスを保存しません。",
         "choose_color": "色を選択", "subtitle_sample": "字幕サンプル", "title_sample": "タイトルサンプル", "ffmpeg_preview": "FFmpeg preview",
         "preview_window": "静止画プレビュー", "close": "閉じる",
+        "slideshow_enabled": "紙芝居モード", "slideshow_load_timesheet": "タイムシートの読み込み",
+        "slideshow_image_count": "画像数", "slideshow_fade_transition": "フェードトランジション",
+        "slideshow_timesheet": "タイムシート",
+        "slideshow_note": "紙芝居モードでは、ファイルタブの背景画像とタイトルタブのタイトル文字列をこのタブの設定で上書きします。タイトルのフォント、サイズ、位置などはタイトルタブの設定を使います。",
+        "slideshow_scene_number": "番号", "slideshow_start_time": "開始時間", "slideshow_title": "タイトル",
+        "slideshow_image_file": "画像ファイル", "slideshow_thumbnail": "サムネイル",
+        "slideshow_no_image": "No image", "slideshow_preview_error": "Preview error",
     },
     "en": {
         "tab_files": "Files", "tab_srt": "Subtitle Lines", "tab_title": "Title", "tab_subtitle": "Subtitle",
+        "tab_slideshow": "Slideshow",
         "tab_spectrum": "Spectrum", "tab_output": "Output", "tab_advanced": "Advanced", "tab_presets": "Presets",
         "language": "Language", "background": "Background image", "audio": "Audio", "srt": "SRT subtitle",
         "spectrum_color": "Color spectrum", "spectrum_mask": "Mask video", "output_mp4": "Output MP4",
@@ -169,6 +179,13 @@ TRANSLATIONS = {
         "preset_note": "System presets cannot be edited or deleted. User presets do not save media file paths.",
         "choose_color": "Choose color", "subtitle_sample": "Subtitle sample", "title_sample": "Title sample", "ffmpeg_preview": "FFmpeg preview",
         "preview_window": "Still preview", "close": "Close",
+        "slideshow_enabled": "Slideshow mode", "slideshow_load_timesheet": "Load timesheet",
+        "slideshow_image_count": "Image count", "slideshow_fade_transition": "Fade transition",
+        "slideshow_timesheet": "Timesheet",
+        "slideshow_note": "In slideshow mode, the background image from the Files tab and the title text from the Title tab are overridden by the settings in this tab. Font, size, and position still come from the Title tab.",
+        "slideshow_scene_number": "Number", "slideshow_start_time": "Start time", "slideshow_title": "Title",
+        "slideshow_image_file": "Image file", "slideshow_thumbnail": "Thumbnail",
+        "slideshow_no_image": "No image", "slideshow_preview_error": "Preview error",
     },
 }
 
@@ -203,6 +220,17 @@ TOOLTIPS = {
     "mask_proc": {"ja": "マスク動画の二値化やアルファ強度を補正します。", "en": "Adjusts mask binarization and alpha strength."},
     "preview_time": {"ja": "静止画・動画プレビューに使う元動画上の時刻です。", "en": "Source timeline time used for still/movie previews."},
     "preview_duration": {"ja": "短尺動画プレビューの長さです。", "en": "Length of the short movie preview."},
+    "slideshow_enabled": {"ja": "ONにすると、ファイルタブの背景画像とタイトルタブのタイトル文字列を紙芝居設定で上書きします。", "en": "When enabled, slideshow settings override the Files tab background image and the Title tab title text."},
+    "slideshow_load_timesheet": {"ja": "UTF-8のタイムシートを読み込み、開始時間とタイトルをまとめて入力します。画像ファイルは個別に選択します。", "en": "Loads a UTF-8 timesheet to fill start times and titles. Image files are still selected individually."},
+    "slideshow_image_count": {"ja": "紙芝居に使う場面数です。2〜20の範囲で指定します。", "en": "Number of scenes in the slideshow. Choose from 2 to 20."},
+    "slideshow_fade_transition": {"ja": "ONにすると、切り替え時刻の前後0.5秒、合計1秒でフェードします。", "en": "When enabled, each cut uses a 1-second fade centered on the cut point: 0.5 seconds before and 0.5 seconds after."},
+    "slideshow_timesheet": {"ja": "読み込んだタイムシートのパスです。タイムシートは補助入力で、必須ではありません。", "en": "Path to the loaded timesheet. Timesheets are optional helper input."},
+    "slideshow_scene_number": {"ja": "場面のIDです。01、02のように自動で割り当てます。", "en": "Scene ID assigned automatically, such as 01 or 02."},
+    "slideshow_start_time": {"ja": "この場面を開始する時刻です。形式は mm:ss,ms です。1枚目は 00:00,000 固定です。", "en": "Start time for this scene. Use mm:ss,ms. The first scene is fixed at 00:00,000."},
+    "slideshow_title": {"ja": "この場面で表示するタイトル文字列です。空欄でも構いません。見た目はタイトルタブの設定を使います。", "en": "Title text shown for this scene. It may be blank. Styling comes from the Title tab."},
+    "slideshow_image_file": {"ja": "この場面で背景に使う画像です。空欄の場合は黒背景になります。", "en": "Background image for this scene. Leave blank to use a black background."},
+    "slideshow_select_image": {"ja": "この場面の画像ファイルを選択します。", "en": "Select the image file for this scene."},
+    "slideshow_thumbnail": {"ja": "選択した画像の確認用サムネイルです。", "en": "Thumbnail preview of the selected image."},
 }
 
 
@@ -270,6 +298,12 @@ def format_duration_seconds(seconds: float) -> str:
     return f"{max(0.0, seconds):.6f}".rstrip("0").rstrip(".")
 
 
+def no_window_subprocess_kwargs() -> dict[str, int]:
+    if NO_WINDOW_SUBPROCESS_FLAGS:
+        return {"creationflags": NO_WINDOW_SUBPROCESS_FLAGS}
+    return {}
+
+
 def probe_media_duration(path: str) -> float:
     ffprobe = find_tool("ffprobe")
     cmd = [
@@ -287,6 +321,7 @@ def probe_media_duration(path: str) -> float:
         encoding="utf-8",
         errors="replace",
         shell=False,
+        **no_window_subprocess_kwargs(),
     )
     if result.returncode != 0:
         raise RuntimeError(f"ffprobe failed to read duration: {result.stderr.strip() or path}")
@@ -418,6 +453,7 @@ class BackgroundSettings:
     mode: str = "single"
     timesheet: str = ""
     image_dir: str = ""
+    fade_transition: bool = False
     scenes: list[SlideshowScene] = field(default_factory=list)
 
 
@@ -1129,30 +1165,48 @@ def build_slideshow_background_inputs_and_chain(
     args: list[str] = []
     filters: list[str] = []
     concat_inputs: list[str] = []
+    segment_durations_ms: list[int] = []
+    fade_enabled = bool(getattr(settings.background, "fade_transition", False)) and len(segments) > 1
+    fade_ms = 1000
+    fade_half_ms = fade_ms // 2
     input_index = 0
     for index, (scene, _seg_start, seg_end) in enumerate(segments):
         seg_start = segments[index][1]
         seg_duration_ms = max(1, seg_end - seg_start)
+        input_duration_ms = seg_duration_ms + (fade_ms if fade_enabled else 0)
         label = f"bgseg{index}"
         if scene.path:
             args.extend([
                 "-loop", "1",
                 "-framerate", str(settings.output.fps),
-                "-t", format_duration_seconds(seg_duration_ms / 1000.0),
+                "-t", format_duration_seconds(input_duration_ms / 1000.0),
                 "-i", scene.path,
             ])
-            filters.append(background_video_filter(settings, input_index, seg_duration_ms, label))
+            filters.append(background_video_filter(settings, input_index, input_duration_ms, label))
             input_index += 1
         else:
-            duration = format_duration_seconds(seg_duration_ms / 1000.0)
+            duration = format_duration_seconds(input_duration_ms / 1000.0)
             filters.append(
                 f"color=c=black:s={settings.output.width}x{settings.output.height}:r={settings.output.fps},"
                 f"format=rgba,trim=duration={duration},setpts=PTS-STARTPTS[{label}];"
             )
         concat_inputs.append(f"[{label}]")
+        segment_durations_ms.append(seg_duration_ms)
 
     if len(concat_inputs) == 1:
         filters.append(f"{concat_inputs[0]}null[bg];")
+    elif fade_enabled:
+        current = concat_inputs[0]
+        offset_ms = 0
+        for index in range(1, len(concat_inputs)):
+            offset_ms += segment_durations_ms[index - 1]
+            fade_start_ms = max(0, offset_ms - fade_half_ms)
+            output_label = "bg" if index + 1 == len(concat_inputs) else f"bgfade{index}"
+            filters.append(
+                f"{current}{concat_inputs[index]}xfade=transition=fade:duration=1:"
+                f"offset={format_duration_seconds(fade_start_ms / 1000.0)}[{output_label}];"
+            )
+            current = f"[{output_label}]"
     else:
         filters.append(f"{''.join(concat_inputs)}concat=n={len(concat_inputs)}:v=1:a=0[bg];")
     return args, "".join(filters), input_index
@@ -1594,6 +1648,7 @@ class App(Tk):
             "background": StringVar(),
             "background_mode": StringVar(value="single"),
             "slideshow_enabled": BooleanVar(value=False),
+            "slideshow_fade_transition": BooleanVar(value=False),
             "slideshow_image_count": IntVar(value=2),
             "timesheet": StringVar(),
             "audio": StringVar(),
@@ -1855,7 +1910,7 @@ class App(Tk):
 
     def _build_slideshow_tab(self) -> None:
         f = Frame(self.notebook)
-        self.notebook.add(f, text="紙芝居")
+        self.notebook.add(f, text=self.t("tab_slideshow"))
         f.columnconfigure(0, weight=1)
         f.rowconfigure(2, weight=1)
 
@@ -1865,13 +1920,18 @@ class App(Tk):
 
         chk = ttk.Checkbutton(
             top,
-            text="紙芝居モード",
+            text=self.t("slideshow_enabled"),
             variable=self.vars["slideshow_enabled"],
             command=self._on_slideshow_enabled_changed,
         )
         chk.grid(row=0, column=0, sticky="w", pady=(0, 6))
-        Button(top, text="タイムシートの読み込み", command=self.pick_timesheet).grid(row=1, column=0, sticky="w", pady=(0, 6))
-        Label(top, text="画像数", anchor="w").grid(row=2, column=0, sticky="w")
+        self.add_tip(chk, "slideshow_enabled")
+        load_btn = Button(top, text=self.t("slideshow_load_timesheet"), command=self.pick_timesheet)
+        load_btn.grid(row=1, column=0, sticky="w", pady=(0, 6))
+        self.add_tip(load_btn, "slideshow_load_timesheet")
+        count_label = Label(top, text=self.t("slideshow_image_count"), anchor="w")
+        count_label.grid(row=2, column=0, sticky="w")
+        self.add_tip(count_label, "slideshow_image_count")
         count_cb = ttk.Combobox(
             top,
             textvariable=self.vars["slideshow_image_count"],
@@ -1881,14 +1941,25 @@ class App(Tk):
         )
         count_cb.grid(row=3, column=0, sticky="w", pady=(0, 6))
         count_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_slideshow_count_changed())
-        Label(top, text="タイムシート", anchor="w").grid(row=4, column=0, sticky="w")
-        Entry(top, textvariable=self.vars["timesheet"]).grid(row=5, column=0, sticky="ew", pady=(0, 4))
-
-        note = (
-            "紙芝居モードでは、ファイルタブの背景画像とタイトルタブのタイトル文字列をこのタブの設定で上書きします。"
-            " タイトルのフォント、サイズ、位置などはタイトルタブの設定を使います。"
+        self.add_tip(count_cb, "slideshow_image_count")
+        fade_chk = ttk.Checkbutton(
+            top,
+            text=self.t("slideshow_fade_transition"),
+            variable=self.vars["slideshow_fade_transition"],
+            command=self._draw_preview,
         )
-        Label(f, text=note, anchor="w", justify="left", wraplength=760, foreground="#555555").grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 6))
+        fade_chk.grid(row=4, column=0, sticky="w", pady=(0, 6))
+        self.add_tip(fade_chk, "slideshow_fade_transition")
+        timesheet_label = Label(top, text=self.t("slideshow_timesheet"), anchor="w")
+        timesheet_label.grid(row=5, column=0, sticky="w")
+        self.add_tip(timesheet_label, "slideshow_timesheet")
+        timesheet_entry = Entry(top, textvariable=self.vars["timesheet"])
+        timesheet_entry.grid(row=6, column=0, sticky="ew", pady=(0, 4))
+        self.add_tip(timesheet_entry, "slideshow_timesheet")
+
+        note_label = Label(f, text=self.t("slideshow_note"), anchor="w", justify="left", wraplength=760, foreground="#555555")
+        note_label.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 6))
+        self.add_tip(note_label, "slideshow_enabled")
 
         canvas = Canvas(f, highlightthickness=0)
         scrollbar = ttk.Scrollbar(f, orient="vertical", command=canvas.yview)
@@ -1927,36 +1998,55 @@ class App(Tk):
             scene.grid(row=index, column=0, sticky="ew", padx=4, pady=(0, 12))
             scene.columnconfigure(0, weight=1)
 
-            Label(scene, text="番号", anchor="w").grid(row=0, column=0, sticky="w", padx=8, pady=(6, 2))
-            Label(scene, text=scene_id, anchor="w").grid(row=1, column=0, sticky="w", padx=8, pady=(0, 6))
+            number_label = Label(scene, text=self.t("slideshow_scene_number"), anchor="w")
+            number_label.grid(row=0, column=0, sticky="w", padx=8, pady=(6, 2))
+            self.add_tip(number_label, "slideshow_scene_number")
+            number_value = Label(scene, text=scene_id, anchor="w")
+            number_value.grid(row=1, column=0, sticky="w", padx=8, pady=(0, 6))
+            self.add_tip(number_value, "slideshow_scene_number")
 
-            Label(scene, text="開始時間", anchor="w").grid(row=2, column=0, sticky="w", padx=8, pady=(0, 2))
+            start_label = Label(scene, text=self.t("slideshow_start_time"), anchor="w")
+            start_label.grid(row=2, column=0, sticky="w", padx=8, pady=(0, 2))
+            self.add_tip(start_label, "slideshow_start_time")
             start_entry = Entry(scene, textvariable=row_vars["start"], width=14)
             if index == 0:
                 row_vars["start"].set("00:00,000")
                 start_entry.configure(state="readonly")
             start_entry.grid(row=3, column=0, sticky="w", padx=8, pady=(0, 6))
             start_entry.bind("<FocusOut>", lambda _e: self._draw_preview())
+            self.add_tip(start_entry, "slideshow_start_time")
 
-            Label(scene, text="タイトル", anchor="w").grid(row=4, column=0, sticky="w", padx=8, pady=(0, 2))
+            title_label = Label(scene, text=self.t("slideshow_title"), anchor="w")
+            title_label.grid(row=4, column=0, sticky="w", padx=8, pady=(0, 2))
+            self.add_tip(title_label, "slideshow_title")
             title_entry = Entry(scene, textvariable=row_vars["title"])
             title_entry.grid(row=5, column=0, sticky="ew", padx=8, pady=(0, 6))
             title_entry.bind("<FocusOut>", lambda _e: self._draw_preview())
+            self.add_tip(title_entry, "slideshow_title")
 
-            Label(scene, text="画像ファイル", anchor="w").grid(row=6, column=0, sticky="w", padx=8, pady=(0, 2))
+            image_label = Label(scene, text=self.t("slideshow_image_file"), anchor="w")
+            image_label.grid(row=6, column=0, sticky="w", padx=8, pady=(0, 2))
+            self.add_tip(image_label, "slideshow_image_file")
             image_row = Frame(scene)
             image_row.grid(row=7, column=0, sticky="ew", padx=8, pady=(0, 8))
             image_row.columnconfigure(0, weight=1)
             path_entry = Entry(image_row, textvariable=row_vars["path"])
             path_entry.grid(row=0, column=0, sticky="ew", padx=(0, 6))
-            Button(image_row, text="選択", command=lambda i=index: self.pick_slideshow_image(i)).grid(row=0, column=1, sticky="e")
+            self.add_tip(path_entry, "slideshow_image_file")
+            select_btn = Button(image_row, text=self.t("select"), command=lambda i=index: self.pick_slideshow_image(i))
+            select_btn.grid(row=0, column=1, sticky="e")
+            self.add_tip(select_btn, "slideshow_select_image")
 
-            Label(scene, text="サムネイル", anchor="w").grid(row=8, column=0, sticky="w", padx=8, pady=(0, 2))
+            thumb_label = Label(scene, text=self.t("slideshow_thumbnail"), anchor="w")
+            thumb_label.grid(row=8, column=0, sticky="w", padx=8, pady=(0, 2))
+            self.add_tip(thumb_label, "slideshow_thumbnail")
             thumb_box = Frame(scene, width=220, height=128, borderwidth=1, relief="sunken", bg="#202020")
             thumb_box.grid(row=9, column=0, sticky="w", padx=8, pady=(0, 8))
             thumb_box.grid_propagate(False)
             thumb = Label(thumb_box, text="", anchor="center", bg="#202020")
             thumb.place(relx=0.5, rely=0.5, anchor="center")
+            self.add_tip(thumb_box, "slideshow_thumbnail")
+            self.add_tip(thumb, "slideshow_thumbnail")
             self._update_slideshow_thumbnail(index, thumb)
 
     def _sync_slideshow_scenes_from_rows(self) -> None:
@@ -2029,7 +2119,7 @@ class App(Tk):
     def _update_slideshow_thumbnail(self, index: int, label: Label) -> None:
         path = self.slideshow_row_vars[index]["path"].get().strip() if index < len(self.slideshow_row_vars) else ""
         if not path or not Path(path).exists() or Image is None or ImageTk is None:
-            label.configure(image="", text="No image", fg="#dddddd")
+            label.configure(image="", text=self.t("slideshow_no_image"), fg="#dddddd")
             return
         try:
             with Image.open(path) as im:
@@ -2039,7 +2129,7 @@ class App(Tk):
             self.slideshow_thumbnails[index] = photo
             label.configure(image=photo, text="")
         except Exception:
-            label.configure(image="", text="Preview error", fg="#dddddd")
+            label.configure(image="", text=self.t("slideshow_preview_error"), fg="#dddddd")
 
     def _available_fonts(self) -> list[str]:
         """Return a sorted list of system font family names for the font selector."""
@@ -3426,6 +3516,7 @@ class App(Tk):
                 mode="slideshow" if bool(self.vars["slideshow_enabled"].get()) else "single",
                 timesheet=self.vars["timesheet"].get(),
                 image_dir="",
+                fade_transition=bool(self.vars["slideshow_fade_transition"].get()),
                 scenes=[dataclass_from_dict(SlideshowScene, asdict(scene)) for scene in self.slideshow_scenes],
             ),
             subtitle=SubtitleSettings(
@@ -3497,6 +3588,7 @@ class App(Tk):
         background_mode = getattr(settings.background, "mode", "single")
         self.vars["background_mode"].set(background_mode)
         self.vars["slideshow_enabled"].set(background_mode == "slideshow")
+        self.vars["slideshow_fade_transition"].set(bool(getattr(settings.background, "fade_transition", False)))
         self.vars["timesheet"].set(getattr(settings.background, "timesheet", ""))
         self.slideshow_scenes = [
             dataclass_from_dict(SlideshowScene, asdict(scene)) for scene in getattr(settings.background, "scenes", [])
@@ -3856,6 +3948,7 @@ class App(Tk):
                 encoding="utf-8",
                 errors="replace",
                 shell=False,
+                **no_window_subprocess_kwargs(),
             )
             self.append_log(result.stdout)
             if result.returncode != 0:
@@ -3959,6 +4052,7 @@ class App(Tk):
                 encoding="utf-8",
                 errors="replace",
                 shell=False,
+                **no_window_subprocess_kwargs(),
             )
             assert process.stdout is not None
             for line in process.stdout:
@@ -4069,6 +4163,7 @@ class App(Tk):
                 encoding="utf-8",
                 errors="replace",
                 shell=False,
+                **no_window_subprocess_kwargs(),
             )
             assert process.stdout is not None
             for line in process.stdout:
