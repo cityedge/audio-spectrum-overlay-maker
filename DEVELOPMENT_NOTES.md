@@ -1,4 +1,4 @@
-# Audio Spectrum Overlay Maker v1.3.0 Development Notes
+# Audio Spectrum Overlay Maker v1.3.1 Development Notes
 
 ## Architecture
 
@@ -33,11 +33,14 @@ audio decode
 -> display-bar transform / scrolling
 -> peak-hold value generation
 -> frame drawing
+-> optional edge glow
 -> Post Transform
 -> ffmpeg encoding
 ```
 
 Post Transform is intentionally after drawing. The drawing layer should not gain special branches for rotation, trapezoid, or audio-reactive scale.
+
+Edge Glow is intentionally before Post Transform. It is part of the rendered main spectrum appearance, so rotation and trapezoid transforms carry the glow with the spectrum.
 
 ## Pair Output Design
 
@@ -104,7 +107,7 @@ scale = 100 + (target_scale - 100) * energy
 
 ## Presets
 
-System presets are defined in `preset_manager.py`. v1.3.0 ships 12 system presets. User presets live in `presets_user.json`, which is ignored by Git and is not part of the release zip.
+System presets are defined in `preset_manager.py`. v1.3.1 ships 12 system presets. User presets live in `presets_user.json`, which is ignored by Git and is not part of the release zip.
 
 ## ffmpeg / ffprobe Lookup
 

@@ -26,6 +26,8 @@ COMMON_VALUES: dict[str, Any] = {
     "digital_enabled": False,
     "digital_segments": 16,
     "digital_gap_px": 2,
+    "edge_glow_enabled": False,
+    "edge_glow_percent": 20,
     "peak_hold_enabled": False,
     "peak_hold_ms": 100,
     "peak_decay_ms": 300,

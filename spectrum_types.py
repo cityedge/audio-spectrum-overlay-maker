@@ -12,7 +12,7 @@ from typing import Callable, Tuple
 
 import numpy as np
 
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 RGB = Tuple[int, int, int]
 LogFn = Callable[[str], None] | None
 
@@ -35,6 +35,8 @@ class RenderStyle:
     digital_enabled: bool = False
     digital_segments: int = 16
     digital_gap_px: int = 2
+    edge_glow_enabled: bool = False
+    edge_glow_percent: int = 20
     peak_hold_enabled: bool = False
     peak_hold_ms: int = 100
     peak_decay_ms: int = 300

@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.3.1
+
+- Added black-background-only Edge Glow for main output.
+- Edge Glow spreads rendered spectrum colors by one pixel in eight directions before Post Transform, then restores the original frame on top.
+- Matte output remains unchanged, and Edge Glow is automatically disabled when the detailed background color is not black.
+- Refreshed bundled `final_composer.py` and `USER_MANUAL_SSVC.md` without changing the handoff interface.
+
 ## v1.3.0
 
 Stable release for the Post Transform and SRT Composer generation.

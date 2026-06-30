@@ -146,6 +146,7 @@ TRANSLATIONS = {
         "slideshow_note": "紙芝居モードでは、ファイルタブの背景画像とタイトルタブのタイトル文字列をこのタブの設定で上書きします。タイトルのフォント、サイズ、位置などはタイトルタブの設定を使います。",
         "slideshow_scene_number": "番号", "slideshow_start_time": "開始時間", "slideshow_title": "タイトル",
         "slideshow_image_file": "画像ファイル", "slideshow_thumbnail": "サムネイル",
+        "slideshow_jump_to_cut": "切り替えへジャンプ",
         "slideshow_no_image": "No image", "slideshow_preview_error": "Preview error",
     },
     "en": {
@@ -185,6 +186,7 @@ TRANSLATIONS = {
         "slideshow_note": "In slideshow mode, the background image from the Files tab and the title text from the Title tab are overridden by the settings in this tab. Font, size, and position still come from the Title tab.",
         "slideshow_scene_number": "Number", "slideshow_start_time": "Start time", "slideshow_title": "Title",
         "slideshow_image_file": "Image file", "slideshow_thumbnail": "Thumbnail",
+        "slideshow_jump_to_cut": "Jump to cut",
         "slideshow_no_image": "No image", "slideshow_preview_error": "Preview error",
     },
 }
@@ -231,6 +233,7 @@ TOOLTIPS = {
     "slideshow_image_file": {"ja": "この場面で背景に使う画像です。空欄の場合は黒背景になります。", "en": "Background image for this scene. Leave blank to use a black background."},
     "slideshow_select_image": {"ja": "この場面の画像ファイルを選択します。", "en": "Select the image file for this scene."},
     "slideshow_thumbnail": {"ja": "選択した画像の確認用サムネイルです。", "en": "Thumbnail preview of the selected image."},
+    "slideshow_jump_to_cut": {"ja": "プレビュー用時刻を、この場面の開始時間にセットします。動画生成して開くと切り替わりを中心に確認できます。", "en": "Sets the preview time to this scene's start time, making the movie preview centered on the cut."},
 }
 
 
@@ -497,6 +500,10 @@ def format_timesheet_time(ms: int) -> str:
     minutes, rest = divmod(ms, 60_000)
     seconds, millis = divmod(rest, 1000)
     return f"{minutes:02d}:{seconds:02d},{millis:03d}"
+
+
+def preview_time_for_slideshow_cut(start_ms: int) -> float:
+    return round(max(0, int(start_ms)) / 1000, 3)
 
 
 SLIDESHOW_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".webp")
@@ -1982,6 +1989,17 @@ class App(Tk):
         self._rebuild_slideshow_rows()
         self._draw_preview()
 
+    def jump_to_slideshow_cut(self, index: int) -> None:
+        if not (0 <= index < len(self.slideshow_row_vars)):
+            return
+        try:
+            start_ms = parse_timesheet_time(self.slideshow_row_vars[index]["start"].get().strip())
+        except Exception as exc:
+            messagebox.showerror("Timesheet error", str(exc))
+            return
+        self.vars["preview_time"].set(preview_time_for_slideshow_cut(start_ms))
+        self._draw_preview()
+
     def _rebuild_slideshow_rows(self) -> None:
         rows = getattr(self, "slideshow_rows_frame", None)
         if rows is None:
@@ -2008,13 +2026,23 @@ class App(Tk):
             start_label = Label(scene, text=self.t("slideshow_start_time"), anchor="w")
             start_label.grid(row=2, column=0, sticky="w", padx=8, pady=(0, 2))
             self.add_tip(start_label, "slideshow_start_time")
-            start_entry = Entry(scene, textvariable=row_vars["start"], width=14)
+            start_row = Frame(scene)
+            start_row.grid(row=3, column=0, sticky="w", padx=8, pady=(0, 6))
+            start_entry = Entry(start_row, textvariable=row_vars["start"], width=14)
             if index == 0:
                 row_vars["start"].set("00:00,000")
                 start_entry.configure(state="readonly")
-            start_entry.grid(row=3, column=0, sticky="w", padx=8, pady=(0, 6))
+            start_entry.grid(row=0, column=0, sticky="w")
             start_entry.bind("<FocusOut>", lambda _e: self._draw_preview())
             self.add_tip(start_entry, "slideshow_start_time")
+            if index > 0:
+                jump_btn = Button(
+                    start_row,
+                    text=self.t("slideshow_jump_to_cut"),
+                    command=lambda i=index: self.jump_to_slideshow_cut(i),
+                )
+                jump_btn.grid(row=0, column=1, sticky="w", padx=(8, 0))
+                self.add_tip(jump_btn, "slideshow_jump_to_cut")
 
             title_label = Label(scene, text=self.t("slideshow_title"), anchor="w")
             title_label.grid(row=4, column=0, sticky="w", padx=8, pady=(0, 2))

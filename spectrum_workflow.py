@@ -307,6 +307,7 @@ def render_audio_to_video(
             bar_color=(0, 0, 0),
             bar_color2=(0, 0, 0),
             color_mode="vertical",
+            edge_glow_enabled=False,
         )
         log("Writing main and matte outputs in parallel.", log_callback)
         with ThreadPoolExecutor(max_workers=2) as executor:

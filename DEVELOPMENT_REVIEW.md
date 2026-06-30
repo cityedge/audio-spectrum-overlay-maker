@@ -1,8 +1,8 @@
-# Audio Spectrum Overlay Maker v1.3.0 Release Review
+# Audio Spectrum Overlay Maker v1.3.1 Release Review
 
 ## Scope
 
-v1.3.0 stabilizes the v1.3 alpha work into a release package. The reviewed scope is:
+v1.3.1 stabilizes the edge-glow polish pass on top of the v1.3 Post Transform release. The reviewed scope is:
 
 - peak-hold drawing
 - digital segmented bars
@@ -10,6 +10,7 @@ v1.3.0 stabilizes the v1.3 alpha work into a release package. The reviewed scope
 - Post Transform layer
 - rotation / vertical trapezoid / horizontal trapezoid
 - audio-reactive scaling
+- edge glow
 - main/matte pair output
 - SRT Spectrum Video Composer handoff
 - system presets
@@ -25,6 +26,8 @@ The important behavioral contracts are preserved:
 - Audio-reactive scaling is disabled unless the explicit checkbox is ON.
 - Audio-reactive scale `100%` remains neutral.
 - Audio-reactive scale values below `100%` shrink instead of enlarge.
+- Edge Glow is applied only to black-background main output and is disabled for matte output.
+- Edge Glow is automatically disabled when the detailed background color is not black.
 - Main and matte outputs use the same transformed frame geometry.
 - Pair output keeps no-overwrite filename pairing.
 - `final_composer.py` is not imported during normal app startup.
@@ -36,6 +39,8 @@ Post Transform is correctly kept after complete frame drawing. Rotation, trapezo
 
 Audio-reactive scaling is intentionally implemented as a Post Transform parameter driven by per-frame bar values. The low-band-only option uses the low-frequency side of the already transformed display bars, which is practical for kick/bass-driven pulse effects.
 
+Edge Glow is a drawing-stage main-output effect, applied before Post Transform. It spreads the rendered spectrum color by one pixel in eight directions and restores the original frame on top. This keeps the matte geometry unchanged while reducing visible compression/compositing outlines around digital pieces, rounded bars, and peak-hold fragments.
+
 Main and matte rendering now runs in parallel when pair output is enabled. Both renders receive the same `bar_values`, `peak_values`, `TransformSettings`, and `PostTransformSettings`, so the geometry contract is preserved.
 
 ## Residual Risks
@@ -46,4 +51,4 @@ Main and matte rendering now runs in parallel when pair output is enabled. Both 
 
 ## Release Decision
 
-Proceed with v1.3.0 packaging.
+Proceed with v1.3.1 packaging.

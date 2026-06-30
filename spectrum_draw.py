@@ -21,6 +21,41 @@ from spectrum_primitives import (
 )
 from spectrum_scene import CanvasSpec, Scene
 
+
+def apply_edge_glow(frame: np.ndarray, strength_percent: int, background_color: RGB) -> np.ndarray:
+    """Add a one-pixel glow around non-black drawn pixels.
+
+    This is intentionally a black-background feature.  It spreads the already
+    drawn RGB colors by one pixel in 8 directions, then places the original
+    frame back on top so the core spectrum shape is unchanged.
+    """
+    if tuple(background_color) != (0, 0, 0):
+        return frame
+    strength = max(0.0, min(1.0, float(strength_percent or 0) / 100.0))
+    if strength <= 0.0:
+        return frame
+
+    glow = np.zeros_like(frame)
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dx == 0 and dy == 0:
+                continue
+            src_y0 = max(0, -dy)
+            src_y1 = frame.shape[0] - max(0, dy)
+            src_x0 = max(0, -dx)
+            src_x1 = frame.shape[1] - max(0, dx)
+            dst_y0 = max(0, dy)
+            dst_y1 = frame.shape[0] - max(0, -dy)
+            dst_x0 = max(0, dx)
+            dst_x1 = frame.shape[1] - max(0, -dx)
+            shifted = (frame[src_y0:src_y1, src_x0:src_x1].astype(np.float32) * strength).astype(np.uint8)
+            glow[dst_y0:dst_y1, dst_x0:dst_x1] = np.maximum(glow[dst_y0:dst_y1, dst_x0:dst_x1], shifted)
+
+    out = glow
+    drawn = np.any(frame != 0, axis=2)
+    out[drawn] = frame[drawn]
+    return out
+
 def build_layout(style: RenderStyle) -> Tuple[List[Tuple[int, int]], int, int]:
     layout = BarSpectrumPart(style).build_layout()
     return layout.positions, layout.base_y, layout.max_height
@@ -35,6 +70,8 @@ def draw_spectrum_frame(values: np.ndarray, style: RenderStyle, band_color_offse
     scene = build_bar_scene(values, style, band_color_offset=band_color_offset, peak_values=peak_values)
     frame = create_frame(scene.canvas.width, scene.canvas.height, scene.canvas.background_color)
     draw_primitives(frame, scene.primitives)
+    if bool(getattr(style, "edge_glow_enabled", False)):
+        frame = apply_edge_glow(frame, int(getattr(style, "edge_glow_percent", 20)), scene.canvas.background_color)
     return frame
 
 
