@@ -1,4 +1,4 @@
-# Audio Spectrum Overlay Maker v1.3.1 Development Notes
+# Audio Spectrum Overlay Maker v1.3.2 Development Notes
 
 ## Architecture
 
@@ -30,6 +30,7 @@ spectrum_utils.py       shared utilities and tool lookup
 audio decode
 -> FFT analysis
 -> dynamic motion shaping
+-> optional display-only high-frequency boost
 -> display-bar transform / scrolling
 -> peak-hold value generation
 -> frame drawing
@@ -41,6 +42,19 @@ audio decode
 Post Transform is intentionally after drawing. The drawing layer should not gain special branches for rotation, trapezoid, or audio-reactive scale.
 
 Edge Glow is intentionally before Post Transform. It is part of the rendered main spectrum appearance, so rotation and trapezoid transforms carry the glow with the spectrum.
+
+High-frequency boost is display-only. `transform_spectrum_data()` can derive boosted display values by adding a log-frequency dB slope to `SpectrumData.raw_db` and remapping through Dynamic motion. Audio-reactive scale receives unboosted display values through `render_video(..., audio_values=...)`, so visual high-band balancing does not change the pulse trigger.
+
+The high-frequency boost curves intentionally use steep exponents: Gentle = 2, Standard = 4, Moderately Steep = 6, Steep = 8. This keeps mid bands mostly stable while allowing sparse upper bands to be lifted strongly.
+
+Edge Glow modes:
+
+- `none`: no glow
+- `light`: four-direction one-pixel spread at 12.5% strength
+- `standard`: four-direction one-pixel spread at 25% strength
+- `strong`: four-direction one-pixel spread at 50% strength
+
+Legacy `simple` and `advanced` preset values are normalized to `standard`.
 
 ## Pair Output Design
 
@@ -107,7 +121,7 @@ scale = 100 + (target_scale - 100) * energy
 
 ## Presets
 
-System presets are defined in `preset_manager.py`. v1.3.1 ships 12 system presets. User presets live in `presets_user.json`, which is ignored by Git and is not part of the release zip.
+System presets are defined in `preset_manager.py`. v1.3.2 ships 12 system presets. User presets live in `presets_user.json`, which is ignored by Git and is not part of the release zip.
 
 ## ffmpeg / ffprobe Lookup
 

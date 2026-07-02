@@ -1,4 +1,4 @@
-# Audio Spectrum Overlay Maker v1.3.1
+# Audio Spectrum Overlay Maker v1.3.2
 
 Audio Spectrum Overlay Maker is a local Windows Python/Tkinter application for generating silent MP4 spectrum-analyzer overlay videos from audio files.
 
@@ -10,6 +10,7 @@ Audio Spectrum Overlay Maker は、音源ファイルを解析して、音に反
 - Single-sided and dual-sided bar display.
 - Digital / LED-style segmented bars.
 - Optional one-pixel edge glow for black-background main output.
+- Display-only high-frequency boost for balancing low-heavy spectrum material.
 - Peak hold markers with configurable hold and decay.
 - Band scrolling with vertical, band, and loop-band gradients.
 - Post Transform layer applied after each frame is drawn.
@@ -57,7 +58,7 @@ Top:    main video   -> Compare/Lighten
 
 The main and matte videos are generated from the same analyzed values and the same Post Transform settings. Bar height, peak hold, scrolling, rotation, trapezoid transforms, and audio-reactive scaling stay frame-aligned.
 
-When pair output is enabled, v1.3.1 renders the main and matte videos in parallel. Heavy Post Transform settings are still CPU-intensive, but pair output is significantly faster than rendering the two videos sequentially.
+When pair output is enabled, v1.3.2 renders the main and matte videos in parallel. Heavy Post Transform settings are still CPU-intensive, but pair output is significantly faster than rendering the two videos sequentially.
 
 ## Post Transform Layer
 
@@ -71,7 +72,7 @@ Post Transform
 ffmpeg encoding
 ```
 
-Supported static transforms in v1.3.1:
+Supported static transforms in v1.3.2:
 
 - Rotation around the canvas center.
 - Vertical trapezoid: negative values narrow the top, positive values narrow the bottom.
@@ -96,20 +97,30 @@ Audio-reactive scaling is controlled by the `音量連動の拡大` / `Audio rea
 
 The low-band reference range is configured in the Advanced tab. The default is 25% of the low-frequency side of the spectrum bars.
 
+## High-Frequency Boost
+
+High-frequency boost is a display correction for sources where low bands dominate and high bands rarely rise. It adds a configurable dB slope across the analyzed frequency range before the display values are generated.
+
+- Range: 0 dB to 36 dB.
+- Curve: Gentle, Standard, Moderately Steep, or Steep. The steeper curves are intentionally weighted toward the upper end so mid bands do not rise too much.
+- 0 dB disables the correction.
+- The correction affects the drawn spectrum and peak hold.
+- Audio-reactive scaling uses the unboosted values, so visual balancing does not change the pulse trigger.
+
 ## Edge Glow
 
-Edge Glow is a black-background-only drawing option for the main video. It spreads the already rendered spectrum colors by one pixel in eight directions, then places the original frame back on top. This can soften visible compression/compositing outlines around digital pieces, rounded bars, and peak-hold fragments.
+Edge Glow is a black-background-only drawing option for the main video. It spreads the already rendered spectrum colors by one pixel, then places the original frame back on top. This can soften visible compression/compositing outlines around digital pieces, rounded bars, and peak-hold fragments.
 
-- Default: OFF.
-- Strength range: 0% to 100%.
-- 0% is black / effectively no glow.
-- 100% uses the original rendered color.
+- Default: None.
+- Light: four directions, fixed 12.5% strength.
+- Standard: four directions, fixed 25% strength.
+- Strong: four directions, fixed 50% strength.
 - Matte output is unchanged.
 - Edge Glow is applied before Post Transform, so rotation and trapezoid transforms carry the glow with the spectrum.
 
 ## System Presets
 
-v1.3.1 includes these system presets:
+v1.3.2 includes these system presets:
 
 1. `01 Basic White`
 2. `02 Dual White`

@@ -40,12 +40,15 @@ def render_video(
     transform: TransformSettings | None = None,
     post_transform: PostTransformSettings | None = None,
     peak_values: np.ndarray | None = None,
+    audio_values: np.ndarray | None = None,
 ) -> None:
     frame_count, bars = bar_values.shape
     if bars != style.bars:
         raise RuntimeError("Internal error: bar_values does not match style.bars.")
     if peak_values is not None and peak_values.shape != bar_values.shape:
         raise RuntimeError("Internal error: peak_values does not match bar_values.")
+    if audio_values is not None and audio_values.shape != bar_values.shape:
+        raise RuntimeError("Internal error: audio_values does not match bar_values.")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     log(f"Writing video: {output_path}", log_callback)
     proc = open_ffmpeg_encoder(output_path, style.width, style.height, style.fps, encode)
@@ -58,7 +61,7 @@ def render_video(
             band_offset = compute_band_color_offset(i, transform.scroll_mode, transform.scroll_step_frames) if transform is not None else 0
             peaks = peak_values[i] if peak_values is not None else None
             frame = draw_spectrum_frame(bar_values[i], style, band_color_offset=band_offset, peak_values=peaks)
-            frame = post_applier.apply(frame, i, bar_values[i])
+            frame = post_applier.apply(frame, i, audio_values[i] if audio_values is not None else bar_values[i])
             proc.stdin.write(frame.tobytes())
             if frame_count >= 300 and ((i + 1) % progress_step == 0 or i + 1 == frame_count):
                 log(f"Writing: {100.0 * (i + 1) / frame_count:5.1f}%", log_callback)

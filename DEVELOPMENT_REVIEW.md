@@ -1,8 +1,8 @@
-# Audio Spectrum Overlay Maker v1.3.1 Release Review
+# Audio Spectrum Overlay Maker v1.3.2 Release Review
 
 ## Scope
 
-v1.3.1 stabilizes the edge-glow polish pass on top of the v1.3 Post Transform release. The reviewed scope is:
+v1.3.2 stabilizes the high-frequency boost tuning pass on top of the v1.3.1 edge-glow release. The reviewed scope is:
 
 - peak-hold drawing
 - digital segmented bars
@@ -39,7 +39,7 @@ Post Transform is correctly kept after complete frame drawing. Rotation, trapezo
 
 Audio-reactive scaling is intentionally implemented as a Post Transform parameter driven by per-frame bar values. The low-band-only option uses the low-frequency side of the already transformed display bars, which is practical for kick/bass-driven pulse effects.
 
-Edge Glow is a drawing-stage main-output effect, applied before Post Transform. It spreads the rendered spectrum color by one pixel in eight directions and restores the original frame on top. This keeps the matte geometry unchanged while reducing visible compression/compositing outlines around digital pieces, rounded bars, and peak-hold fragments.
+Edge Glow is a drawing-stage main-output effect, applied before Post Transform. It spreads the rendered spectrum color by one pixel in four directions, with fixed Light, Standard, and Strong strengths. The original frame is restored on top. This keeps the matte geometry unchanged while reducing visible compression/compositing outlines around digital pieces, rounded bars, and peak-hold fragments.
 
 Main and matte rendering now runs in parallel when pair output is enabled. Both renders receive the same `bar_values`, `peak_values`, `TransformSettings`, and `PostTransformSettings`, so the geometry contract is preserved.
 
@@ -51,4 +51,4 @@ Main and matte rendering now runs in parallel when pair output is enabled. Both 
 
 ## Release Decision
 
-Proceed with v1.3.1 packaging.
+Proceed with v1.3.2 packaging after final visual confirmation.

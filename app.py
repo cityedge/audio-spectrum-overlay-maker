@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Audio Spectrum Overlay Maker v1.3.1 GUI."""
+"""Audio Spectrum Overlay Maker v1.3.2 GUI."""
 from __future__ import annotations
 
 import importlib
@@ -414,8 +414,9 @@ UI_TEXT = {
         "digital_enabled": "デジタル化",
         "digital_segments": "分割数",
         "digital_gap_px": "ギャップpx",
-        "edge_glow_enabled": "エッジグロー",
-        "edge_glow_percent": "グロー濃度%",
+        "edge_glow_mode": "エッジグロー",
+        "high_frequency_boost_db": "高域ブーストdB",
+        "high_frequency_boost_curve": "高域ブースト傾斜",
         "peak_hold_enabled": "ピークホールド",
         "peak_hold_ms": "保持ms",
         "peak_decay_ms": "下降ms",
@@ -508,8 +509,9 @@ UI_TEXT = {
         "digital_enabled": "Digital Segments",
         "digital_segments": "Segments",
         "digital_gap_px": "Gap px",
-        "edge_glow_enabled": "Edge Glow",
-        "edge_glow_percent": "Glow Strength %",
+        "edge_glow_mode": "Edge Glow",
+        "high_frequency_boost_db": "High boost dB",
+        "high_frequency_boost_curve": "High boost curve",
         "peak_hold_enabled": "Peak Hold",
         "peak_hold_ms": "Hold ms",
         "peak_decay_ms": "Decay ms",
@@ -589,8 +591,10 @@ TOOLTIPS["post_transform_audio_scale_floor_percent"] = "音量連動ズームを
 TOOLTIPS["post_transform_audio_scale_ceiling_percent"] = "この全体音量以上で音量連動ズームが最大拡大率に到達します。"
 TOOLTIPS["post_transform_audio_scale_hold_ms"] = "音量連動ズームが大きくなったあと、その最大値を保持する時間です。"
 TOOLTIPS["post_transform_audio_scale_decay_ms"] = "保持後に音量連動ズームが元の音量に向かって戻る速さです。大きいほどゆっくり戻ります。"
-TOOLTIPS["edge_glow_enabled"] = "黒背景専用です。メイン動画の描画済みスペアナを1pxだけ外側へ薄く広げます。マット動画には適用しません。"
-TOOLTIPS["edge_glow_percent"] = "外側に広げる色の濃さです。0%は黒、100%は元画像と同じ色です。"
+TOOLTIPS["edge_glow_mode"] = "黒背景専用です。なし、薄い、標準、濃いから選びます。4方向に1pxだけ広げます。マット動画には適用しません。"
+TOOLTIPS["edge_glow_enabled"] = TOOLTIPS["edge_glow_mode"]
+TOOLTIPS["high_frequency_boost_db"] = "高音域ほど強く持ち上げる表示補正です。0dBで無効、最大36dBです。音量連動拡大の判定には使いません。"
+TOOLTIPS["high_frequency_boost_curve"] = "高域ブーストのかかり方です。標準、やや急、急の順に高い帯域へ寄せて効きます。"
 TOOLTIPS_EN["post_transform_rotate_degrees"] = "Static rotation angle in degrees. The canvas size is preserved and out-of-frame areas are clipped."
 TOOLTIPS_EN["post_transform_trapezoid_vertical_percent"] = "-100 narrows the top, 0 disables it, and +100 narrows the bottom."
 TOOLTIPS_EN["post_transform_trapezoid_horizontal_percent"] = "-100 narrows the left side, 0 disables it, and +100 narrows the right side."
@@ -602,8 +606,10 @@ TOOLTIPS_EN["post_transform_audio_scale_floor_percent"] = "Overall volume where 
 TOOLTIPS_EN["post_transform_audio_scale_ceiling_percent"] = "Overall volume where audio-reactive zoom reaches the maximum scale."
 TOOLTIPS_EN["post_transform_audio_scale_hold_ms"] = "How long audio-reactive zoom holds its recent maximum."
 TOOLTIPS_EN["post_transform_audio_scale_decay_ms"] = "How slowly audio-reactive zoom falls after the hold. Larger values fall more slowly."
-TOOLTIPS_EN["edge_glow_enabled"] = "Black-background only. Adds a subtle one-pixel color spread around the rendered main spectrum. Matte output is unchanged."
-TOOLTIPS_EN["edge_glow_percent"] = "Strength of the outer spread. 0% is black; 100% uses the original rendered color."
+TOOLTIPS_EN["edge_glow_mode"] = "Black-background only. Choose none, light, standard, or strong. The glow spreads one pixel in four directions. Matte output is unchanged."
+TOOLTIPS_EN["edge_glow_enabled"] = TOOLTIPS_EN["edge_glow_mode"]
+TOOLTIPS_EN["high_frequency_boost_db"] = "Display-only correction that raises higher frequencies more strongly. 0 dB disables it. It does not drive audio-reactive scaling."
+TOOLTIPS_EN["high_frequency_boost_curve"] = "Controls how the high-frequency boost slopes. Standard, Moderately Steep, and Steep increasingly concentrate the boost in higher bands."
 for _ui_lang, _texts in UI_TEXT.items():
     _texts["open_composer"] = (
         "Open SRT Spectrum Video Composer"
@@ -623,6 +629,14 @@ CHOICE_OPTIONS = {
     "color_mode": {
         "日本語": ["縦グラデーション", "帯域グラデーション", "ループ帯域グラデーション"],
         "English": ["Vertical Gradient", "Band Gradient", "Loop Band Gradient"],
+    },
+    "edge_glow_mode": {
+        "日本語": ["なし", "薄い", "標準", "濃い"],
+        "English": ["None", "Light", "Standard", "Strong"],
+    },
+    "high_frequency_boost_curve": {
+        "日本語": ["なだらか", "標準", "やや急", "急"],
+        "English": ["Gentle", "Standard", "Moderately Steep", "Steep"],
     },
     "response_speed": {
         "日本語": ["ゆったり", "標準", "速い", "カスタム"],
@@ -769,7 +783,9 @@ class App(tk.Tk):
             "digital_segments": tk.IntVar(value=16),
             "digital_gap_px": tk.IntVar(value=2),
             "edge_glow_enabled": tk.BooleanVar(value=False),
-            "edge_glow_percent": tk.IntVar(value=20),
+            "edge_glow_mode": tk.StringVar(value="なし"),
+            "high_frequency_boost_db": tk.IntVar(value=0),
+            "high_frequency_boost_curve": tk.StringVar(value="標準"),
             "peak_hold_enabled": tk.BooleanVar(value=False),
             "peak_hold_ms": tk.IntVar(value=100),
             "peak_decay_ms": tk.IntVar(value=300),
@@ -914,14 +930,48 @@ class App(tk.Tk):
     def edge_glow_background_supported(self) -> bool:
         return parse_color(str(self.vars["background_color"].get()), (0, 0, 0)) == (0, 0, 0)
 
+    def edge_glow_mode_ja(self) -> str:
+        return str(self.choice_to_ja("edge_glow_mode", self.vars["edge_glow_mode"].get()) or "なし")
+
+    def normalize_edge_glow_mode_ja(self, value: str) -> str:
+        raw = str(value or "").strip()
+        lowered = raw.lower()
+        if raw in {"簡易グロー", "詳細グロー", "Simple Glow", "Advanced Glow"} or lowered in {"simple", "advanced"}:
+            return "標準"
+        if raw in {"Light", "薄い"} or lowered == "light":
+            return "薄い"
+        if raw in {"Standard", "標準"} or lowered == "standard":
+            return "標準"
+        if raw in {"Strong", "濃い"} or lowered == "strong":
+            return "濃い"
+        return "なし"
+
+    def _set_widget_tree_state(self, widget: tk.Widget | None, state: str) -> None:
+        if widget is None:
+            return
+        try:
+            widget.configure(state=state)
+        except Exception:
+            pass
+        for child in getattr(widget, "winfo_children", lambda: [])():
+            self._set_widget_tree_state(child, state)
+
     def update_edge_glow_state(self) -> None:
         supported = self.edge_glow_background_supported()
-        if not supported and bool(self.vars["edge_glow_enabled"].get()):
-            self.vars["edge_glow_enabled"].set(False)
-        widget = self.control_widgets.get("edge_glow_enabled")
+        mode_ja = self.normalize_edge_glow_mode_ja(self.edge_glow_mode_ja())
+        was_applying = self.apply_in_progress
+        self.apply_in_progress = True
+        try:
+            if not supported and mode_ja != "なし":
+                mode_ja = "なし"
+            self.vars["edge_glow_mode"].set(self.choice_from_ja("edge_glow_mode", mode_ja))
+            self.vars["edge_glow_enabled"].set(supported and mode_ja != "なし")
+        finally:
+            self.apply_in_progress = was_applying
+        widget = self.control_widgets.get("edge_glow_mode")
         if widget is not None:
             try:
-                widget.configure(state=("normal" if supported else "disabled"))
+                widget.configure(state=("readonly" if supported else "disabled"))
             except Exception:
                 pass
 
@@ -1147,8 +1197,11 @@ class App(tk.Tk):
         self._check(tab, row, "デジタル化", "digital_enabled"); row += 1
         self._spin(tab, row, "分割数", "digital_segments", 1, 64, 1); row += 1
         self._spin(tab, row, "ギャップpx", "digital_gap_px", 0, 64, 1); row += 1
-        self._check(tab, row, "エッジグロー", "edge_glow_enabled"); row += 1
-        self._scale(tab, row, "グロー濃度%", "edge_glow_percent", 0, 100); row += 1
+        ttk.Separator(tab).grid(row=row, column=0, columnspan=3, sticky="ew", pady=12); row += 1
+        self._combo(tab, row, "エッジグロー", "edge_glow_mode", self.choice_values("edge_glow_mode")); row += 1
+        ttk.Separator(tab).grid(row=row, column=0, columnspan=3, sticky="ew", pady=12); row += 1
+        self._scale(tab, row, "高域ブーストdB", "high_frequency_boost_db", 0, 36); row += 1
+        self._combo(tab, row, "高域ブースト傾斜", "high_frequency_boost_curve", self.choice_values("high_frequency_boost_curve")); row += 1
         ttk.Separator(tab).grid(row=row, column=0, columnspan=3, sticky="ew", pady=12); row += 1
         self._check(tab, row, "ピークホールド", "peak_hold_enabled"); row += 1
         self._spin(tab, row, "保持ms", "peak_hold_ms", 0, 3000, 50); row += 1
@@ -1280,6 +1333,7 @@ class App(tk.Tk):
         self._row_label(parent, row, text, key)
         box = ttk.Frame(parent)
         box.grid(row=row, column=1, sticky="ew", pady=5)
+        self.control_widgets[key] = box
         box.columnconfigure(0, weight=1)
         scale = ttk.Scale(box, from_=frm, to=to, variable=self.vars[key], orient="horizontal")
         scale.grid(row=0, column=0, sticky="ew")
@@ -1297,6 +1351,7 @@ class App(tk.Tk):
         self._row_label(parent, row, text, key)
         box = ttk.Frame(parent)
         box.grid(row=row, column=1, sticky="ew", pady=5)
+        self.control_widgets[key] = box
         box.columnconfigure(0, weight=1)
         scale = ttk.Scale(box, from_=frm, to=to, variable=self.vars[key], orient="horizontal")
         scale.grid(row=0, column=0, sticky="ew")
@@ -1371,7 +1426,7 @@ class App(tk.Tk):
             self.set_auto_frequency_range(None, None)
         elif key == "frequency_mode":
             self.update_auto_frequency_range_label()
-        elif key in {"background_color", "edge_glow_enabled"}:
+        elif key in {"background_color", "edge_glow_enabled", "edge_glow_mode"}:
             self.update_edge_glow_state()
 
         if key not in OPERATIONAL_KEYS and self.vars["preset"].get() != CUSTOM_LABEL:
@@ -1393,7 +1448,7 @@ class App(tk.Tk):
             if str(self.choice_to_ja(key, self.vars[key].get())) != "カスタム":
                 self.recompute_advanced_from_qualitative()
 
-        if key in {"width", "height", "bars", "display_mode", "color_mode", "background_color", "bar_color", "bar_color2", "bar_width_percent", "corner_radius", "digital_enabled", "digital_segments", "digital_gap_px", "edge_glow_enabled", "edge_glow_percent", "peak_hold_enabled", "peak_hold_ms", "peak_decay_ms", "peak_size_percent", "digital_peak_segments", "max_height_percent", "side_margin_percent", "bottom_margin_percent", "gamma", "scroll_mode", "scroll_step_frames", "post_transform_rotate_degrees", "post_transform_trapezoid_vertical_percent", "post_transform_trapezoid_horizontal_percent", "post_transform_audio_scale_enabled", "post_transform_audio_scale_max_percent", "post_transform_audio_scale_low_only", "post_transform_audio_scale_low_band_percent", "post_transform_audio_scale_floor_percent", "post_transform_audio_scale_ceiling_percent", "post_transform_audio_scale_hold_ms", "post_transform_audio_scale_decay_ms"}:
+        if key in {"width", "height", "bars", "display_mode", "color_mode", "background_color", "bar_color", "bar_color2", "bar_width_percent", "corner_radius", "digital_enabled", "digital_segments", "digital_gap_px", "edge_glow_enabled", "edge_glow_mode", "high_frequency_boost_db", "high_frequency_boost_curve", "peak_hold_enabled", "peak_hold_ms", "peak_decay_ms", "peak_size_percent", "digital_peak_segments", "max_height_percent", "side_margin_percent", "bottom_margin_percent", "gamma", "scroll_mode", "scroll_step_frames", "post_transform_rotate_degrees", "post_transform_trapezoid_vertical_percent", "post_transform_trapezoid_horizontal_percent", "post_transform_audio_scale_enabled", "post_transform_audio_scale_max_percent", "post_transform_audio_scale_low_only", "post_transform_audio_scale_low_band_percent", "post_transform_audio_scale_floor_percent", "post_transform_audio_scale_ceiling_percent", "post_transform_audio_scale_hold_ms", "post_transform_audio_scale_decay_ms"}:
             if key == "bars" and not bool(self.vars["advanced_custom"].get()):
                 self.recompute_advanced_from_qualitative()
             self.after_idle(self.update_still_preview)
@@ -1592,8 +1647,16 @@ class App(tk.Tk):
             values.setdefault("digital_enabled", False)
             values.setdefault("digital_segments", 16)
             values.setdefault("digital_gap_px", 2)
-            values.setdefault("edge_glow_enabled", False)
-            values.setdefault("edge_glow_percent", 20)
+            legacy_edge_glow_enabled = bool(values.get("edge_glow_enabled", False))
+            if "edge_glow_mode" not in values:
+                values["edge_glow_mode"] = "標準" if legacy_edge_glow_enabled else "なし"
+            else:
+                values["edge_glow_mode"] = self.normalize_edge_glow_mode_ja(str(values.get("edge_glow_mode", "なし")))
+            if legacy_edge_glow_enabled and values["edge_glow_mode"] == "なし":
+                values["edge_glow_mode"] = "標準"
+            values["edge_glow_enabled"] = values["edge_glow_mode"] != "なし"
+            values.setdefault("high_frequency_boost_db", 0)
+            values.setdefault("high_frequency_boost_curve", "標準")
             values.setdefault("peak_hold_enabled", False)
             values.setdefault("peak_hold_ms", 100)
             values.setdefault("peak_decay_ms", 300)
@@ -1706,6 +1769,13 @@ class App(tk.Tk):
             messagebox.showerror("削除エラー", str(exc))
 
     def current_style(self) -> RenderStyle:
+        edge_mode_ja = self.normalize_edge_glow_mode_ja(self.edge_glow_mode_ja())
+        edge_mode = {
+            "薄い": "light",
+            "標準": "standard",
+            "濃い": "strong",
+        }.get(edge_mode_ja, "none")
+        edge_enabled = edge_mode != "none" and self.edge_glow_background_supported()
         return RenderStyle(
             width=int(self.vars["width"].get()),
             height=int(self.vars["height"].get()),
@@ -1728,8 +1798,8 @@ class App(tk.Tk):
             digital_enabled=bool(self.vars["digital_enabled"].get()),
             digital_segments=int(self.vars["digital_segments"].get()),
             digital_gap_px=int(self.vars["digital_gap_px"].get()),
-            edge_glow_enabled=bool(self.vars["edge_glow_enabled"].get()) and self.edge_glow_background_supported(),
-            edge_glow_percent=int(self.vars["edge_glow_percent"].get()),
+            edge_glow_enabled=edge_enabled,
+            edge_glow_mode=edge_mode,
             peak_hold_enabled=bool(self.vars["peak_hold_enabled"].get()),
             peak_hold_ms=int(self.vars["peak_hold_ms"].get()),
             peak_decay_ms=int(self.vars["peak_decay_ms"].get()),
@@ -1761,11 +1831,15 @@ class App(tk.Tk):
     def current_transform(self) -> TransformSettings:
         mode_ja = self.choice_to_ja("scroll_mode", self.vars["scroll_mode"].get())
         mode = {"左": "left", "右": "right"}.get(mode_ja, "none")
+        curve_ja = str(self.choice_to_ja("high_frequency_boost_curve", self.vars["high_frequency_boost_curve"].get()))
+        curve = {"なだらか": "gentle", "やや急": "moderately_steep", "急": "steep"}.get(curve_ja, "standard")
         return TransformSettings(
             display_bars=int(self.vars["bars"].get()),
             shape_profile="neutral",
             scroll_mode=mode,
             scroll_step_frames=max(1, int(self.vars["scroll_step_frames"].get())),
+            high_frequency_boost_db=float(self.vars["high_frequency_boost_db"].get()),
+            high_frequency_boost_curve=curve,
         )
 
     def current_post_transform(self) -> PostTransformSettings:
@@ -2032,7 +2106,7 @@ class App(tk.Tk):
         def worker() -> None:
             try:
                 self.resolve_frequency_range_for_run(input_path, motion, scan_seconds)
-                values, detected_start = analyze_preview_segment(
+                values, audio_values, detected_start = analyze_preview_segment(
                     input_path=input_path,
                     style=style,
                     motion=motion,
@@ -2043,8 +2117,9 @@ class App(tk.Tk):
                     auto_detect=auto,
                     scan_seconds=scan_seconds,
                     log_callback=self.log_from_thread,
+                    return_audio_values=True,
                 )
-                self.after(0, lambda v=values, st=detected_start, sty=style, tr=transform, post=post_transform: self._load_motion_frames(v, st, sty, tr, post))
+                self.after(0, lambda v=values, av=audio_values, st=detected_start, sty=style, tr=transform, post=post_transform: self._load_motion_frames(v, st, sty, tr, post, av))
             except Exception as exc:
                 self.log_from_thread("ERROR: " + str(exc))
                 self.after(0, lambda e=str(exc): self._motion_preview_failed(e))
@@ -2052,7 +2127,7 @@ class App(tk.Tk):
         self.motion_thread = threading.Thread(target=worker, daemon=True)
         self.motion_thread.start()
 
-    def _load_motion_frames(self, values, detected_start: float, style: RenderStyle, transform: TransformSettings | None = None, post_transform: PostTransformSettings | None = None) -> None:
+    def _load_motion_frames(self, values, detected_start: float, style: RenderStyle, transform: TransformSettings | None = None, post_transform: PostTransformSettings | None = None, audio_values=None) -> None:
         try:
             frames: list[np.ndarray] = []
             peak_values = compute_peak_hold_values(values, style, transform=transform)
@@ -2061,7 +2136,7 @@ class App(tk.Tk):
                 band_offset = compute_band_color_offset(i, transform.scroll_mode, transform.scroll_step_frames) if transform is not None else 0
                 peaks = peak_values[i] if peak_values is not None else None
                 frame = draw_spectrum_frame(v, style, band_color_offset=band_offset, peak_values=peaks)
-                frame = post_applier.apply(frame, i, v)
+                frame = post_applier.apply(frame, i, audio_values[i] if audio_values is not None else v)
                 frames.append(frame)
             self.motion_frames = frames
             self.motion_photos = []

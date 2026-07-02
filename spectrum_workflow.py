@@ -170,7 +170,8 @@ def analyze_preview_segment(
     scan_seconds: float = 120.0,
     log_callback: LogFn = None,
     transform: TransformSettings | None = None,
-) -> tuple[np.ndarray, float]:
+    return_audio_values: bool = False,
+) -> tuple[np.ndarray, float] | tuple[np.ndarray, np.ndarray, float]:
     """Analyze a short preview segment from actual audio and return bar values.
 
     If auto_detect is true, the start second is chosen by scanning the beginning of
@@ -207,7 +208,11 @@ def analyze_preview_segment(
     if data.values.shape[0] <= 0:
         raise RuntimeError("Preview range became empty. Check start time, duration, and warmup.")
     transform = transform or TransformSettings(display_bars=style.bars)
-    values = transform_spectrum_data(data, transform)
+    values = transform_spectrum_data(data, transform, motion=motion)
+    boost_db = float(getattr(transform, "high_frequency_boost_db", 0.0) or 0.0)
+    if return_audio_values:
+        audio_values = transform_spectrum_data(data, transform, motion=motion, apply_high_frequency_boost=False) if boost_db > 1.0e-9 else values
+        return values, audio_values, render_start
     return values, render_start
 
 def build_matte_output_path(main_output_path: Path) -> Path:
@@ -296,7 +301,9 @@ def render_audio_to_video(
     elif preview:
         render_frames = int(math.ceil(float(duration) * style.fps))
         data = slice_spectrum_data(data, 0, render_frames)
-    bar_values = transform_spectrum_data(data, transform)
+    bar_values = transform_spectrum_data(data, transform, motion=motion)
+    boost_db = float(getattr(transform, "high_frequency_boost_db", 0.0) or 0.0)
+    audio_values = transform_spectrum_data(data, transform, motion=motion, apply_high_frequency_boost=False) if boost_db > 1.0e-9 else bar_values
     peak_values = compute_peak_hold_values(bar_values, style, transform=transform)
 
     if write_matte:
@@ -308,6 +315,7 @@ def render_audio_to_video(
             bar_color2=(0, 0, 0),
             color_mode="vertical",
             edge_glow_enabled=False,
+            edge_glow_mode="none",
         )
         log("Writing main and matte outputs in parallel.", log_callback)
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -321,6 +329,7 @@ def render_audio_to_video(
                 transform,
                 post_transform,
                 peak_values,
+                audio_values,
             )
             matte_future = executor.submit(
                 render_video,
@@ -332,6 +341,7 @@ def render_audio_to_video(
                 transform,
                 post_transform,
                 peak_values,
+                audio_values,
             )
             main_future.result()
             log(f"Done main: {output_path}", log_callback)
@@ -339,7 +349,7 @@ def render_audio_to_video(
             log(f"Done matte: {matte_path}", log_callback)
     else:
         # Main output is always the user's normal spectrum material.
-        render_video(bar_values, output_path, style, encode, log_callback, transform=transform, post_transform=post_transform, peak_values=peak_values)
+        render_video(bar_values, output_path, style, encode, log_callback, transform=transform, post_transform=post_transform, peak_values=peak_values, audio_values=audio_values)
         log(f"Done main: {output_path}", log_callback)
 
     return output_path

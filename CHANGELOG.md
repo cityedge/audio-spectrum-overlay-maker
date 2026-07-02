@@ -1,9 +1,18 @@
 # Changelog
 
+## v1.3.2
+
+- Added trial high-frequency boost controls: `High boost dB` and `High boost curve`.
+- Expanded high-frequency boost range to 36 dB.
+- Added the `Moderately Steep` high-frequency boost curve between `Standard` and `Steep`.
+- High-frequency boost is display-only and does not affect audio-reactive scaling input.
+
 ## v1.3.1
 
 - Added black-background-only Edge Glow for main output.
-- Edge Glow spreads rendered spectrum colors by one pixel in eight directions before Post Transform, then restores the original frame on top.
+- Simplified Edge Glow to one dropdown: `None`, `Light`, `Standard`, and `Strong`.
+- All Edge Glow strengths use a one-pixel four-direction spread.
+- Legacy v1.3.1 presets with Edge Glow enabled are read as `Standard`; the old glow strength value is ignored.
 - Matte output remains unchanged, and Edge Glow is automatically disabled when the detailed background color is not black.
 - Refreshed bundled `final_composer.py` and `USER_MANUAL_SSVC.md` without changing the handoff interface.
 

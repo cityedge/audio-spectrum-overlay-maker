@@ -12,7 +12,7 @@ from typing import Callable, Tuple
 
 import numpy as np
 
-VERSION = "1.3.1"
+VERSION = "1.3.2"
 RGB = Tuple[int, int, int]
 LogFn = Callable[[str], None] | None
 
@@ -36,7 +36,7 @@ class RenderStyle:
     digital_segments: int = 16
     digital_gap_px: int = 2
     edge_glow_enabled: bool = False
-    edge_glow_percent: int = 20
+    edge_glow_mode: str = "none"
     peak_hold_enabled: bool = False
     peak_hold_ms: int = 100
     peak_decay_ms: int = 300
@@ -93,6 +93,8 @@ class TransformSettings:
     scroll_mode: str = "none"
     scroll_step_frames: int = 2
     scroll_offset: int = 0
+    high_frequency_boost_db: float = 0.0
+    high_frequency_boost_curve: str = "standard"
 
 @dataclass
 class PostTransformModulation:

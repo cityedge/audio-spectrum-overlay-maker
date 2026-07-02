@@ -22,34 +22,41 @@ from spectrum_primitives import (
 from spectrum_scene import CanvasSpec, Scene
 
 
-def apply_edge_glow(frame: np.ndarray, strength_percent: int, background_color: RGB) -> np.ndarray:
+def apply_edge_glow(frame: np.ndarray, background_color: RGB, mode: str = "standard") -> np.ndarray:
     """Add a one-pixel glow around non-black drawn pixels.
 
     This is intentionally a black-background feature.  It spreads the already
-    drawn RGB colors by one pixel in 8 directions, then places the original
-    frame back on top so the core spectrum shape is unchanged.
+    drawn RGB colors by one pixel in four directions, then places the original
+    frame back on top so the core spectrum shape is unchanged.  Old simple and
+    advanced mode names are accepted as the standard strength.
     """
     if tuple(background_color) != (0, 0, 0):
         return frame
-    strength = max(0.0, min(1.0, float(strength_percent or 0) / 100.0))
-    if strength <= 0.0:
+    glow_mode = str(mode or "standard").lower()
+    if glow_mode in {"none", "off"}:
         return frame
+    shifts = {
+        "light": 3,
+        "simple": 2,
+        "standard": 2,
+        "advanced": 2,
+        "strong": 1,
+    }
+    shift_bits = shifts.get(glow_mode, 2)
+    offsets = ((0, -1), (-1, 0), (1, 0), (0, 1))
 
     glow = np.zeros_like(frame)
-    for dy in (-1, 0, 1):
-        for dx in (-1, 0, 1):
-            if dx == 0 and dy == 0:
-                continue
-            src_y0 = max(0, -dy)
-            src_y1 = frame.shape[0] - max(0, dy)
-            src_x0 = max(0, -dx)
-            src_x1 = frame.shape[1] - max(0, dx)
-            dst_y0 = max(0, dy)
-            dst_y1 = frame.shape[0] - max(0, -dy)
-            dst_x0 = max(0, dx)
-            dst_x1 = frame.shape[1] - max(0, -dx)
-            shifted = (frame[src_y0:src_y1, src_x0:src_x1].astype(np.float32) * strength).astype(np.uint8)
-            glow[dst_y0:dst_y1, dst_x0:dst_x1] = np.maximum(glow[dst_y0:dst_y1, dst_x0:dst_x1], shifted)
+    for dx, dy in offsets:
+        src_y0 = max(0, -dy)
+        src_y1 = frame.shape[0] - max(0, dy)
+        src_x0 = max(0, -dx)
+        src_x1 = frame.shape[1] - max(0, dx)
+        dst_y0 = max(0, dy)
+        dst_y1 = frame.shape[0] - max(0, -dy)
+        dst_x0 = max(0, dx)
+        dst_x1 = frame.shape[1] - max(0, -dx)
+        shifted = frame[src_y0:src_y1, src_x0:src_x1] >> shift_bits
+        glow[dst_y0:dst_y1, dst_x0:dst_x1] = np.maximum(glow[dst_y0:dst_y1, dst_x0:dst_x1], shifted)
 
     out = glow
     drawn = np.any(frame != 0, axis=2)
@@ -71,7 +78,11 @@ def draw_spectrum_frame(values: np.ndarray, style: RenderStyle, band_color_offse
     frame = create_frame(scene.canvas.width, scene.canvas.height, scene.canvas.background_color)
     draw_primitives(frame, scene.primitives)
     if bool(getattr(style, "edge_glow_enabled", False)):
-        frame = apply_edge_glow(frame, int(getattr(style, "edge_glow_percent", 20)), scene.canvas.background_color)
+        frame = apply_edge_glow(
+            frame,
+            scene.canvas.background_color,
+            str(getattr(style, "edge_glow_mode", "standard") or "standard"),
+        )
     return frame
 
 

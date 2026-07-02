@@ -1,11 +1,12 @@
-# Audio Spectrum Overlay Maker v1.3.1 Release Notes
+# Audio Spectrum Overlay Maker v1.3.2 Release Notes
 
-v1.3.1 is the edge-glow polish release on top of the Post Transform generation.
+v1.3.2 is the high-frequency boost tuning release on top of the Post Transform generation.
 
 ## Highlights
 
 - Post Transform layer is now part of the main workflow.
-- Edge Glow can be enabled for black-background main output to soften visible compression/compositing outlines.
+- Edge Glow can be enabled for black-background main output to soften visible compression/compositing outlines. It now uses one dropdown: None, Light, Standard, or Strong.
+- High-frequency boost can lift sparse upper bands with Gentle, Standard, Moderately Steep, and Steep curves up to 36 dB without affecting audio-reactive scaling input.
 - Static rotation, vertical trapezoid, horizontal trapezoid, and combined transforms are available from the Visual tab.
 - Audio-reactive scaling can pulse or shrink the whole spectrum based on volume.
 - Low-band-only detection is available for audio-reactive scaling, making kick and bass-driven pulse effects easier to tune.
@@ -29,4 +30,4 @@ v1.3.1 is the edge-glow polish release on top of the Post Transform generation.
 
 ## Known Cost
 
-Post Transform effects are intentionally flexible and can be CPU-heavy. Heavy combinations such as digital bars, scrolling, peak hold, trapezoid, rotation, audio-reactive scaling, and matte pair output can take longer than real time to render.
+Post Transform effects are intentionally flexible and can be CPU-heavy. Heavy combinations such as digital bars, scrolling, peak hold, high-frequency boost, trapezoid, rotation, audio-reactive scaling, and matte pair output can take longer than real time to render.

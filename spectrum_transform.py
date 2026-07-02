@@ -13,7 +13,8 @@ from dataclasses import replace
 
 import numpy as np
 
-from spectrum_types import SpectrumData, TransformSettings
+from spectrum_types import MotionSettings, SpectrumData, TransformSettings
+from spectrum_motion import map_db_to_dynamic_values
 
 def aggregate_analysis_bars(values: np.ndarray, display_bars: int) -> np.ndarray:
     """Convert fixed internal analysis bars to display bars.
@@ -99,19 +100,66 @@ def apply_shape_profile(values: np.ndarray, profile: str = "neutral") -> np.ndar
         return vals
     return np.clip(vals * weight[None, :], 0.0, 1.0)
 
-def transform_spectrum_data(data: SpectrumData, transform: TransformSettings) -> np.ndarray:
+def high_frequency_boost_exponent(curve: str) -> float:
+    curve_key = str(curve or "standard").lower()
+    if curve_key in {"gentle", "smooth", "なだらか"}:
+        return 2.0
+    if curve_key in {"moderately_steep", "slightly_steep", "やや急"}:
+        return 6.0
+    if curve_key in {"steep", "急"}:
+        return 8.0
+    return 4.0
+
+
+def high_frequency_boost_db_by_band(data: SpectrumData, amount_db: float, curve: str) -> np.ndarray:
+    amount = max(0.0, float(amount_db or 0.0))
+    bars = int(data.raw_db.shape[1])
+    if amount <= 1.0e-9 or bars <= 0:
+        return np.zeros((bars,), dtype=np.float32)
+    edges = np.asarray(data.freq_edges, dtype=np.float64)
+    if edges.size != bars + 1:
+        edges = np.geomspace(max(1.0, float(data.freq_min)), max(float(data.freq_min) + 1.0, float(data.freq_max)), bars + 1)
+    edges = np.maximum(edges, 1.0e-6)
+    centers = np.sqrt(edges[:-1] * edges[1:])
+    lo = max(1.0e-6, float(np.min(centers)))
+    hi = max(lo + 1.0e-6, float(np.max(centers)))
+    position = np.log(centers / lo) / max(1.0e-6, math.log(hi / lo))
+    position = np.clip(position, 0.0, 1.0)
+    boost = amount * np.power(position, high_frequency_boost_exponent(curve))
+    return boost.astype(np.float32)
+
+
+def boosted_spectrum_values(data: SpectrumData, motion: MotionSettings, transform: TransformSettings) -> np.ndarray:
+    amount = max(0.0, min(36.0, float(getattr(transform, "high_frequency_boost_db", 0.0) or 0.0)))
+    if amount <= 1.0e-9:
+        return np.asarray(data.values, dtype=np.float32)
+    boost = high_frequency_boost_db_by_band(data, amount, str(getattr(transform, "high_frequency_boost_curve", "standard") or "standard"))
+    boosted_db = np.asarray(data.raw_db, dtype=np.float32) + boost[None, :]
+    return map_db_to_dynamic_values(boosted_db, motion)
+
+
+def transform_spectrum_data(
+    data: SpectrumData,
+    transform: TransformSettings,
+    motion: MotionSettings | None = None,
+    apply_high_frequency_boost: bool = True,
+) -> np.ndarray:
     """Transform generic SpectrumData into display-ready values.
 
     The transformation order is deliberately display-oriented:
 
-    1. Convert internal analysis bands to the final visible bar count.
-    2. Apply integer band-rotation scrolling to those visible bars.
-    3. Apply position-based shape profiles to the visible positions.
+    1. Optionally apply display-only high-frequency dB boost.
+    2. Convert internal analysis bands to the final visible bar count.
+    3. Apply integer band-rotation scrolling to those visible bars.
+    4. Apply position-based shape profiles to the visible positions.
 
     This keeps "one scroll step" equal to one visible bar, not one internal
     analysis band.
     """
-    values = aggregate_analysis_bars(np.asarray(data.values, dtype=np.float32), int(transform.display_bars))
+    source_values = np.asarray(data.values, dtype=np.float32)
+    if apply_high_frequency_boost and motion is not None:
+        source_values = boosted_spectrum_values(data, motion, transform)
+    values = aggregate_analysis_bars(source_values, int(transform.display_bars))
     if transform.scroll_offset:
         values = np.roll(values, int(transform.scroll_offset), axis=1)
     values = apply_integer_scroll(values, transform.scroll_mode, transform.scroll_step_frames)
@@ -127,4 +175,3 @@ def slice_spectrum_data(data: SpectrumData, start_frame: int, end_frame: int) ->
         values=data.values[start_frame:end_frame, :],
         raw_db=data.raw_db[start_frame:end_frame, :],
     )
-
