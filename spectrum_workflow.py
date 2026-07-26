@@ -8,6 +8,7 @@ the compatibility facade in spectrum_engine.py.
 from __future__ import annotations
 
 import math
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
@@ -21,6 +22,20 @@ from spectrum_analysis import analyze_spectrum_data
 from spectrum_transform import slice_spectrum_data, transform_spectrum_data
 from spectrum_encoder import render_video
 from spectrum_peak import compute_peak_hold_values
+from spectrum_cancel import RenderCancelToken, RenderCancelled
+
+
+def _remove_cancelled_output(path: Path) -> bool:
+    """Remove an aborted ffmpeg output after its Windows file handle is released."""
+    for _ in range(10):
+        try:
+            path.unlink(missing_ok=True)
+            return True
+        except PermissionError:
+            time.sleep(0.1)
+        except OSError:
+            return False
+    return False
 
 def find_loud_segment_start(
     input_path: Path,
@@ -68,6 +83,7 @@ def suggest_frequency_range(
     sample_rate: int = 24000,
     scan_seconds: float = 120.0,
     log_callback: LogFn = None,
+    cancel_token: RenderCancelToken | None = None,
 ) -> tuple[float, float]:
     """Suggest a practical frequency range from real audio near the beginning.
 
@@ -81,7 +97,7 @@ def suggest_frequency_range(
     if duration_hint:
         scan_seconds = min(scan_seconds, duration_hint)
     log(f"Auto-analyzing frequency range: first {scan_seconds:.0f}s", log_callback)
-    audio = decode_audio_to_float32_mono(input_path, sample_rate, 0.0, scan_seconds, log_callback)
+    audio = decode_audio_to_float32_mono(input_path, sample_rate, 0.0, scan_seconds, log_callback, cancel_token)
     if audio.size < 2048:
         return 80.0, min(12000.0, sample_rate / 2.0)
 
@@ -102,6 +118,8 @@ def suggest_frequency_range(
     acc = None
     count = 0
     for s in starts:
+        if cancel_token is not None:
+            cancel_token.raise_if_cancelled()
         frame = audio[int(s): int(s) + fft_size]
         if frame.size < fft_size:
             break
@@ -257,8 +275,11 @@ def render_audio_to_video(
     transform: TransformSettings | None = None,
     post_transform: PostTransformSettings | None = None,
     write_matte: bool = False,
+    cancel_token: RenderCancelToken | None = None,
 ) -> Path:
     transform = transform or TransformSettings(display_bars=style.bars)
+    if cancel_token is not None:
+        cancel_token.raise_if_cancelled()
     ok, msg = check_environment()
     if not ok:
         raise RuntimeError(msg)
@@ -289,68 +310,93 @@ def render_audio_to_video(
         else:
             log(f"Source duration: {duration_hint:.2f}s / full render", log_callback)
 
-    audio = decode_audio_to_float32_mono(input_path, motion.sample_rate, decode_start, decode_duration, log_callback)
-    data = analyze_spectrum_data(audio, style, motion, log_callback)
-    if preview and effective_warmup > 0:
-        skip_frames = int(round(effective_warmup * style.fps))
-        render_frames = int(math.ceil(float(duration) * style.fps))
-        data = slice_spectrum_data(data, skip_frames, skip_frames + render_frames)
-        if data.values.shape[0] <= 0:
-            raise RuntimeError("Preview range became empty. Check start time, duration, and warmup.")
-        log(f"Preview after warmup: {data.values.shape[0]:,} frames", log_callback)
-    elif preview:
-        render_frames = int(math.ceil(float(duration) * style.fps))
-        data = slice_spectrum_data(data, 0, render_frames)
-    bar_values = transform_spectrum_data(data, transform, motion=motion)
-    boost_db = float(getattr(transform, "high_frequency_boost_db", 0.0) or 0.0)
-    audio_values = transform_spectrum_data(data, transform, motion=motion, apply_high_frequency_boost=False) if boost_db > 1.0e-9 else bar_values
-    peak_values = compute_peak_hold_values(bar_values, style, transform=transform)
+    try:
+        audio = decode_audio_to_float32_mono(input_path, motion.sample_rate, decode_start, decode_duration, log_callback, cancel_token)
+        if cancel_token is not None:
+            cancel_token.raise_if_cancelled()
+        data = analyze_spectrum_data(audio, style, motion, log_callback)
+        if cancel_token is not None:
+            cancel_token.raise_if_cancelled()
+        if preview and effective_warmup > 0:
+            skip_frames = int(round(effective_warmup * style.fps))
+            render_frames = int(math.ceil(float(duration) * style.fps))
+            data = slice_spectrum_data(data, skip_frames, skip_frames + render_frames)
+            if data.values.shape[0] <= 0:
+                raise RuntimeError("Preview range became empty. Check start time, duration, and warmup.")
+            log(f"Preview after warmup: {data.values.shape[0]:,} frames", log_callback)
+        elif preview:
+            render_frames = int(math.ceil(float(duration) * style.fps))
+            data = slice_spectrum_data(data, 0, render_frames)
+        bar_values = transform_spectrum_data(data, transform, motion=motion)
+        boost_db = float(getattr(transform, "high_frequency_boost_db", 0.0) or 0.0)
+        audio_values = transform_spectrum_data(data, transform, motion=motion, apply_high_frequency_boost=False) if boost_db > 1.0e-9 else bar_values
+        peak_values = compute_peak_hold_values(bar_values, style, transform=transform)
+        if cancel_token is not None:
+            cancel_token.raise_if_cancelled()
 
-    if write_matte:
-        assert matte_path is not None
-        matte_style = replace(
-            style,
-            background_color=(255, 255, 255),
-            bar_color=(0, 0, 0),
-            bar_color2=(0, 0, 0),
-            color_mode="vertical",
-            edge_glow_enabled=False,
-            edge_glow_mode="none",
-        )
-        log("Writing main and matte outputs in parallel.", log_callback)
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            main_future = executor.submit(
-                render_video,
-                bar_values,
-                output_path,
+        if write_matte:
+            assert matte_path is not None
+            matte_style = replace(
                 style,
-                encode,
-                log_callback,
-                transform,
-                post_transform,
-                peak_values,
-                audio_values,
+                background_color=(255, 255, 255),
+                bar_color=(0, 0, 0),
+                bar_color2=(0, 0, 0),
+                color_mode="vertical",
+                edge_glow_enabled=False,
+                edge_glow_mode="none",
             )
-            matte_future = executor.submit(
-                render_video,
-                bar_values,
-                matte_path,
-                matte_style,
-                encode,
-                log_callback,
-                transform,
-                post_transform,
-                peak_values,
-                audio_values,
-            )
-            main_future.result()
+            log("Writing main and matte outputs in parallel.", log_callback)
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                main_future = executor.submit(
+                    render_video,
+                    bar_values,
+                    output_path,
+                    style,
+                    encode,
+                    log_callback,
+                    transform,
+                    post_transform,
+                    peak_values,
+                    audio_values,
+                    cancel_token,
+                )
+                matte_future = executor.submit(
+                    render_video,
+                    bar_values,
+                    matte_path,
+                    matte_style,
+                    encode,
+                    log_callback,
+                    transform,
+                    post_transform,
+                    peak_values,
+                    audio_values,
+                    cancel_token,
+                )
+                main_future.result()
+                log(f"Done main: {output_path}", log_callback)
+                matte_future.result()
+                log(f"Done matte: {matte_path}", log_callback)
+        else:
+            # Main output is always the user's normal spectrum material.
+            render_video(bar_values, output_path, style, encode, log_callback, transform=transform, post_transform=post_transform, peak_values=peak_values, audio_values=audio_values, cancel_token=cancel_token)
             log(f"Done main: {output_path}", log_callback)
-            matte_future.result()
-            log(f"Done matte: {matte_path}", log_callback)
-    else:
-        # Main output is always the user's normal spectrum material.
-        render_video(bar_values, output_path, style, encode, log_callback, transform=transform, post_transform=post_transform, peak_values=peak_values, audio_values=audio_values)
-        log(f"Done main: {output_path}", log_callback)
+    except RenderCancelled as exc:
+        if exc.keep_partial_videos:
+            saved = [str(path) for path in (output_path, matte_path) if path is not None and path.exists()]
+            if saved:
+                log("Render cancelled. Partial output files were kept:", log_callback)
+                for path_text in saved:
+                    log(f"  {path_text}", log_callback)
+            else:
+                log("Render cancelled before video writing began.", log_callback)
+        else:
+            for partial_path in (output_path, matte_path):
+                if partial_path is not None:
+                    if not _remove_cancelled_output(partial_path):
+                        log(f"Could not remove cancelled output: {partial_path}", log_callback)
+            log("Render cancelled. Partial output files were removed.", log_callback)
+        raise
 
     return output_path
 

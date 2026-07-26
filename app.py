@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Audio Spectrum Overlay Maker v1.3.2 GUI."""
+"""Audio Spectrum Overlay Maker v1.4.0 GUI."""
 from __future__ import annotations
 
 import importlib
@@ -140,6 +140,8 @@ from spectrum_engine import (
     TransformSettings,
     PostTransformSettings,
     PostTransformApplier,
+    RenderCancelToken,
+    RenderCancelled,
     analyze_preview_segment,
     build_default_output_path,
     build_matte_output_path,
@@ -237,6 +239,8 @@ TOOLTIPS: dict[str, str] = {
     "motion_preview_2s": "重い変形設定を素早く確認するため、2秒だけ動きプレビューを作成します。",
     "motion_preview_10s": "通常確認用に10秒の動きプレビューを作成します。",
     "full_render": "音源全体に同期したスペアナMP4を書き出します。",
+    "cancel_render": "実行中のプレビュー動画生成または全体生成をキャンセルします。",
+    "keep_cancelled_videos": "オンの場合、キャンセル時に途中までの再生可能な動画を保存します。ペア出力ではメイン動画とマット動画の長さが一致しないため、合成用セットとしては使えません。",
     "open_output": "現在指定している出力先フォルダを開きます。",
     "color_button": "色選択ダイアログを開きます。",
     "advanced_recalc": "定性的な生成・動き設定から詳細パラメータを再計算します。",
@@ -247,7 +251,7 @@ TOOLTIPS: dict[str, str] = {
     "width": "生成するスペアナ素材の横幅です。",
     "height": "生成するスペアナ素材の高さです。",
     "fps": "動画のフレームレートです。標準は30fpsです。",
-    "bars": "横に並ぶ表示バー数です。内部解析バー数とは分離されています。18/24/32のほか、高解像度用に48/64も選べます。",
+    "bars": "横に並ぶ表示バー数です。内部解析バー数とは分離されています。18/24/32のほか、高解像度用に48/64/80/96/112/128も選べます。128本は720px以上を推奨します。",
     "background_color": "通常は黒のまま使います。ペア出力ではマット側は自動的に白背景になります。特殊用途や検証用の詳細設定です。",
     "bar_color": "バーの基準色です。オーバーレイ素材としては白系が最も扱いやすいです。縦グラデーションでは中央/下側、帯域グラデーションでは低域側の色になります。",
     "bar_color2": "バーの第2色です。2色を同じにすると単色になります。色付き素材はブレンド/クロマキー合成で扱いが難しくなる場合があります。",
@@ -258,6 +262,7 @@ TOOLTIPS: dict[str, str] = {
     "digital_segments": "1本のバーを縦方向に何分割するかを指定します。値を増やすほど細かいLEDメーター風になります。",
     "digital_gap_px": "セグメント同士の間に入れる縦方向の隙間です。0にすると隙間なしで段階表示します。",
     "peak_hold_enabled": "バーが下がり始めたあと、直近のピーク位置に短いピーク片を残します。メイン動画とマット動画の両方に反映されます。",
+    "peak_hold_mode": "ピークホールドの表示方法です。ピーク片、ピークのみ、ピークをバー化から選べます。",
     "peak_hold_ms": "ピーク片を固定表示する時間です。標準は100msです。",
     "peak_decay_ms": "保持時間後にピーク片が上端から下端まで落ちる目安時間です。値を大きくするとゆっくり落ちます。",
     "peak_size_percent": "通常バー時のピーク片の長さです。最大バー長に対する割合で、実際の描画は2〜10pxに収まります。",
@@ -283,7 +288,7 @@ TOOLTIPS: dict[str, str] = {
     "pair_output": "オンにすると、通常のスペアナ動画に加えて、比較（暗）用のマット動画を同時に出力します。マットは白地に黒いスペアナ形状です。",
     "warmup": "プレビュー開始位置より少し前から内部解析する秒数です。曲中プレビューの動きを全体生成時に近づけます。",
     "sample_rate": "解析用に内部変換するサンプルレートです。通常は変更不要です。",
-    "analysis_bands": "内部で解析するバー数です。表示バー数とは別に固定することで、表示バー数を変えても動きの印象が変わりにくくなります。",
+    "analysis_bands": "内部で解析するバー数です。詳細カスタムでは表示バー数と同じ18/24/32/48/64/80/96/112/128を選べます。表示本数とそろえると、帯域を集約せず1対1で描画します。",
     "fft_size": "周波数解析の窓サイズです。小さいほど反応が速く、大きいほど滑らかになります。",
     "min_db": "内部ゲート用の下限dBです。通常は変更不要です。",
     "max_db": "内部ゲート用の上限dBです。通常は変更不要です。",
@@ -316,6 +321,8 @@ TOOLTIPS_EN: dict[str, str] = {
     "motion_preview_2s": "Build a 2-second motion preview for quick checks with heavy transforms.",
     "motion_preview_10s": "Build a 10-second motion preview for normal checks.",
     "full_render": "Writes a full-length spectrum MP4 synchronized to the audio.",
+    "cancel_render": "Cancel the active preview or full render.",
+    "keep_cancelled_videos": "Keep playable partial videos when cancelling. With pair output, main and matte durations can differ, so they are not a compositing-ready pair.",
     "open_output": "Open the currently selected output folder.",
     "color_button": "Open the color picker.",
     "advanced_recalc": "Recalculate detailed parameters from the qualitative motion controls.",
@@ -335,6 +342,7 @@ TOOLTIPS_EN: dict[str, str] = {
     "digital_segments": "Number of vertical segments per bar.",
     "digital_gap_px": "Pixel gap between digital segments. Use 0 for no gap.",
     "peak_hold_enabled": "Draw a short peak marker at each bar's recent maximum after the bar starts falling. This is included in both main and matte output.",
+    "peak_hold_mode": "Peak hold display mode. Choose markers, peaks only, or rendering the held peaks as full bars.",
     "peak_hold_ms": "How long the peak marker stays fixed before it starts falling.",
     "peak_decay_ms": "Approximate time for the peak marker to fall from full height to zero after the hold time.",
     "peak_size_percent": "Peak marker length for normal bars, as a percentage of maximum bar height. Drawing is clamped to 2-10 px.",
@@ -360,7 +368,7 @@ TOOLTIPS_EN: dict[str, str] = {
     "pair_output": "Also writes a Compare/Darken matte video. The matte has a white background and the spectrum shape in black.",
     "warmup": "Analyzes slightly before the preview start to make preview motion closer to full render.",
     "sample_rate": "Internal analysis sample rate.",
-    "analysis_bands": "Number of internal analysis bands, separate from visible bar count.",
+    "analysis_bands": "Number of internal analysis bands. Advanced Custom offers the same 18-128 choices as visible bars; matching both uses one analysis band per visible bar.",
     "fft_size": "FFT window size.",
     "min_db": "Detailed lower dB gate.",
     "max_db": "Detailed upper dB gate.",
@@ -395,6 +403,8 @@ UI_TEXT = {
         "motion_message": "音源を選択して「動きプレビュー」を押してください",
         "preview_video": "30秒プレビュー動画生成",
         "full_render": "全体生成",
+        "cancel_render": "生成をキャンセル",
+        "keep_cancelled_videos": "キャンセル時に途中動画を保存",
         "open_output": "出力先を開く",
         "visual_tab": "見た目",
         "motion_tab": "生成・動き",
@@ -418,6 +428,7 @@ UI_TEXT = {
         "high_frequency_boost_db": "高域ブーストdB",
         "high_frequency_boost_curve": "高域ブースト傾斜",
         "peak_hold_enabled": "ピークホールド",
+        "peak_hold_mode": "ピークホールド",
         "peak_hold_ms": "保持ms",
         "peak_decay_ms": "下降ms",
         "peak_size_percent": "ピーク長%",
@@ -490,6 +501,8 @@ UI_TEXT = {
         "motion_message": "Select an audio file and click Motion Preview.",
         "preview_video": "Generate 30s Preview Video",
         "full_render": "Generate Full Video",
+        "cancel_render": "Cancel Render",
+        "keep_cancelled_videos": "Keep Partial Videos on Cancel",
         "open_output": "Open Output Folder",
         "visual_tab": "Visual",
         "motion_tab": "Motion",
@@ -513,6 +526,7 @@ UI_TEXT = {
         "high_frequency_boost_db": "High boost dB",
         "high_frequency_boost_curve": "High boost curve",
         "peak_hold_enabled": "Peak Hold",
+        "peak_hold_mode": "Peak Hold",
         "peak_hold_ms": "Hold ms",
         "peak_decay_ms": "Decay ms",
         "peak_size_percent": "Peak Size %",
@@ -638,6 +652,10 @@ CHOICE_OPTIONS = {
         "日本語": ["なだらか", "標準", "やや急", "急"],
         "English": ["Gentle", "Standard", "Moderately Steep", "Steep"],
     },
+    "peak_hold_mode": {
+        "日本語": ["なし", "ピーク片", "ピークのみ", "ピークをバー化"],
+        "English": ["Off", "Peak Markers", "Peaks Only", "Peaks as Bars"],
+    },
     "response_speed": {
         "日本語": ["ゆったり", "標準", "速い", "カスタム"],
         "English": ["Slow", "Standard", "Fast", "Custom"],
@@ -705,6 +723,7 @@ OPERATIONAL_KEYS = {
     "auto_preview_segment", "scan_seconds",
     "preview_start", "motion_preview_duration",
     "preview_duration", "pair_output", "warmup",
+    "keep_cancelled_videos",
 }
 
 
@@ -729,6 +748,7 @@ class App(tk.Tk):
         self.still_photo: ImageTk.PhotoImage | None = None
         self.log_queue: queue.Queue[str] = queue.Queue()
         self.worker_thread: threading.Thread | None = None
+        self.render_cancel_token: RenderCancelToken | None = None
         self.motion_thread: threading.Thread | None = None
         self.preview_base_height = 220
         self.preview_resize_after_id: str | None = None
@@ -787,6 +807,7 @@ class App(tk.Tk):
             "high_frequency_boost_db": tk.IntVar(value=0),
             "high_frequency_boost_curve": tk.StringVar(value="標準"),
             "peak_hold_enabled": tk.BooleanVar(value=False),
+            "peak_hold_mode": tk.StringVar(value="なし"),
             "peak_hold_ms": tk.IntVar(value=100),
             "peak_decay_ms": tk.IntVar(value=300),
             "peak_size_percent": tk.IntVar(value=4),
@@ -811,6 +832,7 @@ class App(tk.Tk):
             "preview_duration": tk.DoubleVar(value=30.0),
             "pair_output": tk.BooleanVar(value=True),
             "warmup": tk.DoubleVar(value=5.0),
+            "keep_cancelled_videos": tk.BooleanVar(value=False),
             "sample_rate": tk.IntVar(value=24000),
             "fft_size": tk.IntVar(value=1024),
             "analysis_bands": tk.IntVar(value=64),
@@ -945,6 +967,17 @@ class App(tk.Tk):
         if raw in {"Strong", "濃い"} or lowered == "strong":
             return "濃い"
         return "なし"
+
+    def normalize_peak_hold_mode_ja(self, value: str, legacy_enabled: bool = False) -> str:
+        raw = str(value or "").strip()
+        lowered = raw.lower()
+        if raw in {"ピーク片", "Peak Markers"} or lowered in {"marker", "markers", "peak_markers", "true", "on"}:
+            return "ピーク片"
+        if raw in {"ピークのみ", "Peaks Only"} or lowered in {"peaks_only", "peak_only"}:
+            return "ピークのみ"
+        if raw in {"ピークをバー化", "Peaks as Bars"} or lowered in {"peak_bars", "peaks_as_bars", "peak_as_bars"}:
+            return "ピークをバー化"
+        return "ピーク片" if legacy_enabled else "なし"
 
     def _set_widget_tree_state(self, widget: tk.Widget | None, state: str) -> None:
         if widget is None:
@@ -1165,6 +1198,10 @@ class App(tk.Tk):
         self.full_button.pack(side="left", padx=(6, 0))
         self.register_text(self.full_button, "full_render")
         self.add_tooltip(self.full_button, "full_render")
+        self.cancel_render_button = ttk.Button(actions, text=self.ui("cancel_render"), command=self.cancel_render, style="Danger.TButton", state="disabled")
+        self.cancel_render_button.pack(side="left", padx=(6, 0))
+        self.register_text(self.cancel_render_button, "cancel_render")
+        self.add_tooltip(self.cancel_render_button, "cancel_render")
         self.pair_output_check = ttk.Checkbutton(actions, text=self.ui("pair_output"), variable=self.vars["pair_output"])
         self.pair_output_check.pack(side="left", padx=(10, 0))
         self.register_text(self.pair_output_check, "pair_output")
@@ -1188,7 +1225,7 @@ class App(tk.Tk):
         self._combo(tab, row, "色モード", "color_mode", self.choice_values("color_mode")); row += 1
         self._combo(tab, row, "スクロール", "scroll_mode", self.choice_values("scroll_mode")); row += 1
         self._combo(tab, row, "シフト間隔", "scroll_step_frames", [1, 2, 3, 4, 6, 8]); row += 1
-        self._combo(tab, row, "バー本数", "bars", [18, 24, 32, 48, 64]); row += 1
+        self._combo(tab, row, "バー本数", "bars", [18, 24, 32, 48, 64, 80, 96, 112, 128]); row += 1
         self._color_row(tab, row, "バー色1", "bar_color"); row += 1
         self._color_row(tab, row, "バー色2", "bar_color2"); row += 1
         self._scale(tab, row, "バー幅%", "bar_width_percent", 10, 100); row += 1
@@ -1203,7 +1240,7 @@ class App(tk.Tk):
         self._scale(tab, row, "高域ブーストdB", "high_frequency_boost_db", 0, 36); row += 1
         self._combo(tab, row, "高域ブースト傾斜", "high_frequency_boost_curve", self.choice_values("high_frequency_boost_curve")); row += 1
         ttk.Separator(tab).grid(row=row, column=0, columnspan=3, sticky="ew", pady=12); row += 1
-        self._check(tab, row, "ピークホールド", "peak_hold_enabled"); row += 1
+        self._combo(tab, row, "ピークホールド", "peak_hold_mode", self.choice_values("peak_hold_mode")); row += 1
         self._spin(tab, row, "保持ms", "peak_hold_ms", 0, 3000, 50); row += 1
         self._spin(tab, row, "下降ms", "peak_decay_ms", 100, 5000, 50); row += 1
         self._spin(tab, row, "ピーク長%", "peak_size_percent", 1, 20, 1); row += 1
@@ -1261,7 +1298,7 @@ class App(tk.Tk):
         self._check(tab, row, "詳細カスタム", "advanced_custom"); row += 1
         self._spin(tab, row, "sample rate", "sample_rate", 8000, 48000, 1000); row += 1
         self._combo(tab, row, "FFT", "fft_size", [512, 1024, 2048, 4096]); row += 1
-        self._combo(tab, row, "内部解析バー数", "analysis_bands", [48, 64, 96, 128]); row += 1
+        self._combo(tab, row, "内部解析バー数", "analysis_bands", [18, 24, 32, 48, 64, 80, 96, 112, 128]); row += 1
         self._spin_float(tab, row, "min dB", "min_db", -120, 0, 1); row += 1
         self._spin_float(tab, row, "max dB", "max_db", -60, 12, 1); row += 1
         self._spin_float(tab, row, "Attack", "attack", 0.01, 1.0, 0.01); row += 1
@@ -1278,6 +1315,8 @@ class App(tk.Tk):
         self._spin(tab, row, "CRF", "crf", 10, 35, 1); row += 1
         self._combo(tab, row, "Encoder", "encoder", ["libx264", "h264_nvenc"]); row += 1
         self._combo(tab, row, "x264 preset", "x264_preset", ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium"]); row += 1
+        ttk.Separator(tab).grid(row=row, column=0, columnspan=3, sticky="ew", pady=12); row += 1
+        self._check(tab, row, "キャンセル時に途中動画を保存", "keep_cancelled_videos"); row += 1
 
     def _label(self, parent: tk.Widget, text: str, key: str) -> ttk.Label:
         label = ttk.Label(parent, text=self.ui(key) if key in UI_TEXT["日本語"] else text)
@@ -1428,6 +1467,8 @@ class App(tk.Tk):
             self.update_auto_frequency_range_label()
         elif key in {"background_color", "edge_glow_enabled", "edge_glow_mode"}:
             self.update_edge_glow_state()
+        elif key == "peak_hold_mode":
+            self.vars["peak_hold_enabled"].set(self.normalize_peak_hold_mode_ja(str(self.vars["peak_hold_mode"].get())) != "なし")
 
         if key not in OPERATIONAL_KEYS and self.vars["preset"].get() != CUSTOM_LABEL:
             self.vars["preset"].set(CUSTOM_LABEL)
@@ -1448,7 +1489,7 @@ class App(tk.Tk):
             if str(self.choice_to_ja(key, self.vars[key].get())) != "カスタム":
                 self.recompute_advanced_from_qualitative()
 
-        if key in {"width", "height", "bars", "display_mode", "color_mode", "background_color", "bar_color", "bar_color2", "bar_width_percent", "corner_radius", "digital_enabled", "digital_segments", "digital_gap_px", "edge_glow_enabled", "edge_glow_mode", "high_frequency_boost_db", "high_frequency_boost_curve", "peak_hold_enabled", "peak_hold_ms", "peak_decay_ms", "peak_size_percent", "digital_peak_segments", "max_height_percent", "side_margin_percent", "bottom_margin_percent", "gamma", "scroll_mode", "scroll_step_frames", "post_transform_rotate_degrees", "post_transform_trapezoid_vertical_percent", "post_transform_trapezoid_horizontal_percent", "post_transform_audio_scale_enabled", "post_transform_audio_scale_max_percent", "post_transform_audio_scale_low_only", "post_transform_audio_scale_low_band_percent", "post_transform_audio_scale_floor_percent", "post_transform_audio_scale_ceiling_percent", "post_transform_audio_scale_hold_ms", "post_transform_audio_scale_decay_ms"}:
+        if key in {"width", "height", "bars", "display_mode", "color_mode", "background_color", "bar_color", "bar_color2", "bar_width_percent", "corner_radius", "digital_enabled", "digital_segments", "digital_gap_px", "edge_glow_enabled", "edge_glow_mode", "high_frequency_boost_db", "high_frequency_boost_curve", "peak_hold_enabled", "peak_hold_mode", "peak_hold_ms", "peak_decay_ms", "peak_size_percent", "digital_peak_segments", "max_height_percent", "side_margin_percent", "bottom_margin_percent", "gamma", "scroll_mode", "scroll_step_frames", "post_transform_rotate_degrees", "post_transform_trapezoid_vertical_percent", "post_transform_trapezoid_horizontal_percent", "post_transform_audio_scale_enabled", "post_transform_audio_scale_max_percent", "post_transform_audio_scale_low_only", "post_transform_audio_scale_low_band_percent", "post_transform_audio_scale_floor_percent", "post_transform_audio_scale_ceiling_percent", "post_transform_audio_scale_hold_ms", "post_transform_audio_scale_decay_ms"}:
             if key == "bars" and not bool(self.vars["advanced_custom"].get()):
                 self.recompute_advanced_from_qualitative()
             self.after_idle(self.update_still_preview)
@@ -1657,7 +1698,12 @@ class App(tk.Tk):
             values["edge_glow_enabled"] = values["edge_glow_mode"] != "なし"
             values.setdefault("high_frequency_boost_db", 0)
             values.setdefault("high_frequency_boost_curve", "標準")
-            values.setdefault("peak_hold_enabled", False)
+            legacy_peak_hold_enabled = bool(values.get("peak_hold_enabled", False))
+            if "peak_hold_mode" not in values:
+                values["peak_hold_mode"] = "ピーク片" if legacy_peak_hold_enabled else "なし"
+            else:
+                values["peak_hold_mode"] = self.normalize_peak_hold_mode_ja(str(values.get("peak_hold_mode", "なし")), legacy_peak_hold_enabled)
+            values["peak_hold_enabled"] = str(self.choice_to_ja("peak_hold_mode", values.get("peak_hold_mode"))) != "なし"
             values.setdefault("peak_hold_ms", 100)
             values.setdefault("peak_decay_ms", 300)
             values.setdefault("peak_size_percent", 4)
@@ -1776,6 +1822,12 @@ class App(tk.Tk):
             "濃い": "strong",
         }.get(edge_mode_ja, "none")
         edge_enabled = edge_mode != "none" and self.edge_glow_background_supported()
+        peak_mode_ja = self.normalize_peak_hold_mode_ja(str(self.vars["peak_hold_mode"].get()))
+        peak_mode = {
+            "ピーク片": "marker",
+            "ピークのみ": "peaks_only",
+            "ピークをバー化": "peak_bars",
+        }.get(peak_mode_ja, "off")
         return RenderStyle(
             width=int(self.vars["width"].get()),
             height=int(self.vars["height"].get()),
@@ -1800,7 +1852,8 @@ class App(tk.Tk):
             digital_gap_px=int(self.vars["digital_gap_px"].get()),
             edge_glow_enabled=edge_enabled,
             edge_glow_mode=edge_mode,
-            peak_hold_enabled=bool(self.vars["peak_hold_enabled"].get()),
+            peak_hold_enabled=peak_mode != "off",
+            peak_hold_mode=peak_mode,
             peak_hold_ms=int(self.vars["peak_hold_ms"].get()),
             peak_decay_ms=int(self.vars["peak_decay_ms"].get()),
             peak_size_percent=int(self.vars["peak_size_percent"].get()),
@@ -1926,7 +1979,13 @@ class App(tk.Tk):
         self.redraw_still_canvas()
         self.redraw_motion_canvas()
 
-    def resolve_frequency_range_for_run(self, input_path: Path, motion: MotionSettings, scan_seconds: float) -> MotionSettings:
+    def resolve_frequency_range_for_run(
+        self,
+        input_path: Path,
+        motion: MotionSettings,
+        scan_seconds: float,
+        cancel_token: RenderCancelToken | None = None,
+    ) -> MotionSettings:
         """Return a run-local MotionSettings with resolved frequency range.
 
         In automatic mode, the GUI preset values are intentionally not overwritten.
@@ -1939,6 +1998,7 @@ class App(tk.Tk):
                 sample_rate=motion.sample_rate,
                 scan_seconds=scan_seconds,
                 log_callback=self.log_from_thread,
+                cancel_token=cancel_token,
             )
             motion.freq_min = low_hz
             motion.freq_max = high_hz
@@ -2218,8 +2278,12 @@ class App(tk.Tk):
         duration = float(self.vars["preview_duration"].get()) if preview else None
         warmup = 0.0 if preview else 0.0
         output_path = build_default_output_path(input_path, output_dir, style, preview, start, duration)
+        keep_partial_videos = bool(self.vars["keep_cancelled_videos"].get())
+        cancel_token = RenderCancelToken(keep_partial_videos=keep_partial_videos)
+        self.render_cancel_token = cancel_token
         self.preview_button.configure(state="disabled")
         self.full_button.configure(state="disabled")
+        self.cancel_render_button.configure(state="normal")
         self.set_motion_preview_buttons_state("disabled")
         self.log("----------------------------------------")
         self.log("Starting render.")
@@ -2229,7 +2293,7 @@ class App(tk.Tk):
             try:
                 write_matte = bool(self.vars["pair_output"].get())
                 scan_seconds = float(self.vars["scan_seconds"].get())
-                self.resolve_frequency_range_for_run(input_path, motion, scan_seconds)
+                self.resolve_frequency_range_for_run(input_path, motion, scan_seconds, cancel_token)
                 # Preview MP4 is always from the head of the track.
                 if preview:
                     start = 0.0
@@ -2247,11 +2311,17 @@ class App(tk.Tk):
                     warmup=warmup,
                     log_callback=self.log_from_thread,
                     write_matte=write_matte,
+                    cancel_token=cancel_token,
                 )
                 actual_path = Path(actual)
                 self.last_spectrum_video_path = actual_path
                 self.last_spectrum_mask_path = build_matte_output_path(actual_path) if write_matte else None
                 self.log_from_thread(f"Saved to: {actual}")
+            except RenderCancelled as exc:
+                if exc.keep_partial_videos:
+                    self.log_from_thread("Render cancelled. Partial videos were kept; pair output is not frame-synchronized.")
+                else:
+                    self.log_from_thread("Render cancelled.")
             except Exception as exc:
                 self.log_from_thread("ERROR: " + str(exc))
                 self.after(0, lambda e=str(exc): messagebox.showerror("Render Error", e))
@@ -2262,9 +2332,19 @@ class App(tk.Tk):
         self.worker_thread.start()
 
     def _render_finished(self) -> None:
+        self.render_cancel_token = None
         self.preview_button.configure(state="normal")
         self.full_button.configure(state="normal")
+        self.cancel_render_button.configure(state="disabled")
         self.set_motion_preview_buttons_state("normal")
+
+    def cancel_render(self) -> None:
+        token = self.render_cancel_token
+        if token is None or not (self.worker_thread and self.worker_thread.is_alive()):
+            return
+        token.cancel()
+        self.cancel_render_button.configure(state="disabled")
+        self.log("Cancellation requested. Stopping render...")
 
     def open_srt_spectrum_video_composer(self) -> None:
         audio_text = self.vars["input_file"].get().strip()

@@ -31,6 +31,7 @@ COMMON_VALUES: dict[str, Any] = {
     "high_frequency_boost_db": 0,
     "high_frequency_boost_curve": "標準",
     "peak_hold_enabled": False,
+    "peak_hold_mode": "なし",
     "peak_hold_ms": 100,
     "peak_decay_ms": 300,
     "peak_size_percent": 4,

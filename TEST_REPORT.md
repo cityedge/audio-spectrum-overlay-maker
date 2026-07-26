@@ -1,4 +1,4 @@
-# v1.3.2 Test Report
+# v1.4.0 Test Report
 
 ## Automated Checks
 
@@ -29,11 +29,24 @@
   - curve exponents are high-end weighted: Gentle = 2, Standard = 4, Moderately Steep = 6, Steep = 8
   - boosted display values rise above unboosted values in high bands
   - audio-reactive scaling can receive unboosted values separately from display values
+- Peak Hold mode check: passed
+  - legacy ON presets normalize to Peak Markers
+  - Off disables peak generation
+  - Peaks Only draws markers without bar bodies
+  - Peaks as Bars draws held peaks as the bar body
+- Visible-bar count check: passed
+  - visible choices include 80, 96, 112, and 128
+  - Advanced Custom internal-analysis choices mirror all visible choices through 128
+  - 112 internal bands map directly to 112 visible bands
+- Render cancellation check: passed
+  - default cancellation removes incomplete main/matte MP4 files
+  - keep-partial cancellation finalizes playable main/matte MP4 files independently
+  - kept pair durations can differ by design
 - UI text import check: passed
   - reset labels exist in Japanese and English
 - Release package file list check: passed
-  - package: `output/audio_spectrum_overlay_maker_v1_3_2.zip`
-  - entries: 33
+  - package: `output/audio_spectrum_overlay_maker_v1_4_0.zip`
+  - entries: 34
   - no `.venv`, `output`, `work`, `tests`, `__pycache__`, generated MP4, user preset, or ffmpeg executable entries
 
 ## Manual / User-Confirmed Checks
@@ -42,8 +55,9 @@
 - Vertical/horizontal trapezoid: confirmed working.
 - Combined trapezoid + rotation: confirmed working after homography-based ordering fix.
 - Audio-reactive scaling: confirmed working and improved after peak-hold style envelope plus threshold/ceiling tuning.
-- Low-band-driven pulse direction: design accepted for v1.3.2.
+- Low-band-driven pulse direction: confirmed in normal use.
 - Main/matte parallel render: confirmed working by user with SSVC compositing.
+- Default cancellation and keep-partial cancellation: confirmed by user from the application UI.
 
 ## ffmpeg / ffprobe Lookup Order
 
@@ -52,4 +66,9 @@
 
 ## Notes
 
-Heavy combinations of digital bars, scrolling, peak hold, rotation, trapezoid, audio-reactive scaling, edge glow, high-frequency boost, and matte output are expected to render slowly. This is accepted for v1.3.2 because Post Transform flexibility and visual tuning are the priority.
+Heavy combinations of digital bars, scrolling, peak hold, rotation, trapezoid, audio-reactive scaling, edge glow, high-frequency boost, and matte output are expected to render slowly. This is accepted for v1.4.0 because Post Transform flexibility and visual tuning are the priority.
+
+## Visible Bar Count
+
+- Visible-bar choices now include 80, 96, 112, and 128. At 128, qualitative settings raise the internal analysis count to 128 so display bands map one-to-one.
+- Advanced Custom internal-analysis choices match the visible-bar choices: 18, 24, 32, 48, 64, 80, 96, 112, and 128.

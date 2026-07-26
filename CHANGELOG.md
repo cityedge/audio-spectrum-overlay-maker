@@ -1,7 +1,14 @@
 # Changelog
 
+## v1.4.0
+
+- Expanded the visible-bar choices through 128: 80, 96, 112, and 128 are now available in addition to the existing values. Advanced Custom internal-analysis choices now mirror the visible-bar choices.
+- Added a cancel button for active preview-video and full-video rendering. The default removes partial main/matte outputs.
+- Added an advanced `Keep Partial Videos on Cancel` option. Kept main/matte videos are independently finalized and may have different durations.
+
 ## v1.3.2
 
+- Replaced Peak Hold ON/OFF with a display mode dropdown: Off, Peak Markers, Peaks Only, and Peaks as Bars.
 - Added trial high-frequency boost controls: `High boost dB` and `High boost curve`.
 - Expanded high-frequency boost range to 36 dB.
 - Added the `Moderately Steep` high-frequency boost curve between `Standard` and `Steep`.

@@ -1,4 +1,4 @@
-# Audio Spectrum Overlay Maker v1.3.2
+# Audio Spectrum Overlay Maker v1.4.0
 
 Audio Spectrum Overlay Maker is a local Windows Python/Tkinter application for generating silent MP4 spectrum-analyzer overlay videos from audio files.
 
@@ -11,7 +11,8 @@ Audio Spectrum Overlay Maker は、音源ファイルを解析して、音に反
 - Digital / LED-style segmented bars.
 - Optional one-pixel edge glow for black-background main output.
 - Display-only high-frequency boost for balancing low-heavy spectrum material.
-- Peak hold markers with configurable hold and decay.
+- Peak hold modes with configurable hold and decay: markers, peaks only, or held peaks as bars.
+- Visible bar counts through 128, with matching Advanced Custom internal-analysis choices.
 - Band scrolling with vertical, band, and loop-band gradients.
 - Post Transform layer applied after each frame is drawn.
 - Static rotation, vertical trapezoid, horizontal trapezoid, and combined transforms.
@@ -19,6 +20,7 @@ Audio Spectrum Overlay Maker は、音源ファイルを解析して、音に反
 - In-app still preview.
 - 2-second and 10-second in-app motion previews for quick checks.
 - 30-second preview MP4 and full-length render.
+- Render cancellation with optional retention of playable partial videos.
 - Optional main/matte pair output for Compare/Lighten + Compare/Darken compositing.
 - Parallel main/matte rendering when pair output is enabled.
 - SRT Spectrum Video Composer handoff through `final_composer.py`.
@@ -58,7 +60,7 @@ Top:    main video   -> Compare/Lighten
 
 The main and matte videos are generated from the same analyzed values and the same Post Transform settings. Bar height, peak hold, scrolling, rotation, trapezoid transforms, and audio-reactive scaling stay frame-aligned.
 
-When pair output is enabled, v1.3.2 renders the main and matte videos in parallel. Heavy Post Transform settings are still CPU-intensive, but pair output is significantly faster than rendering the two videos sequentially.
+When pair output is enabled, v1.4.0 renders the main and matte videos in parallel. Heavy Post Transform settings are still CPU-intensive, but pair output is significantly faster than rendering the two videos sequentially.
 
 ## Post Transform Layer
 
@@ -72,7 +74,7 @@ Post Transform
 ffmpeg encoding
 ```
 
-Supported static transforms in v1.3.2:
+Supported static transforms in v1.4.0:
 
 - Rotation around the canvas center.
 - Vertical trapezoid: negative values narrow the top, positive values narrow the bottom.
@@ -118,9 +120,23 @@ Edge Glow is a black-background-only drawing option for the main video. It sprea
 - Matte output is unchanged.
 - Edge Glow is applied before Post Transform, so rotation and trapezoid transforms carry the glow with the spectrum.
 
+## Render Cancellation
+
+Both 30-second preview rendering and full rendering can be cancelled.
+
+- Default behavior removes incomplete main/matte MP4 files.
+- The Advanced-tab `Keep Partial Videos on Cancel` option instead closes each active encoder normally and keeps its playable partial MP4.
+- Kept main/matte files can have different durations because each encoder stops at its own next frame boundary. They are for visual inspection only, not a compositing-ready pair.
+
+## Visible Bar Counts
+
+Visible bar choices are `18`, `24`, `32`, `48`, `64`, `80`, `96`, `112`, and `128`. The 80-128 choices are intended for higher-density output, especially at 720px width or larger.
+
+In Advanced Custom mode, the internal-analysis choices mirror the visible choices. Matching both values gives one analysis band per visible bar.
+
 ## System Presets
 
-v1.3.2 includes these system presets:
+v1.4.0 includes these system presets:
 
 1. `01 Basic White`
 2. `02 Dual White`

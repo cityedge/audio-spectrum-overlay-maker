@@ -18,6 +18,7 @@ from spectrum_types import (
     PostTransformModulation,
     PostTransformSettings,
 )
+from spectrum_cancel import RenderCancelToken, RenderCancelled
 from spectrum_utils import log, parse_color, color_to_hex, unique_path, runtime_app_dir, find_external_tool, resolve_external_tool
 from spectrum_audio import check_environment, run_ffprobe_duration, decode_audio_to_float32_mono
 from spectrum_motion import map_db_to_dynamic_values, smooth_values
@@ -72,7 +73,7 @@ from spectrum_workflow import (
 )
 
 __all__ = [
-    "VERSION", "RGB", "LogFn",
+    "VERSION", "RGB", "LogFn", "RenderCancelToken", "RenderCancelled",
     "RenderStyle", "MotionSettings", "EncodeSettings", "SpectrumData", "TransformSettings", "PostTransformModulation", "PostTransformSettings",
     "log", "parse_color", "color_to_hex", "unique_path", "runtime_app_dir", "find_external_tool", "resolve_external_tool",
     "check_environment", "run_ffprobe_duration", "decode_audio_to_float32_mono",

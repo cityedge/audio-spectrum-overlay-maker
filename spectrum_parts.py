@@ -336,6 +336,14 @@ class BarSpectrumPart:
         frame_bottom = int(self.origin_y + int(style.height))
         color_mode = str(getattr(style, 'color_mode', 'vertical') or 'vertical')
         digital_enabled = bool(getattr(style, "digital_enabled", False))
+        peak_mode = str(getattr(style, "peak_hold_mode", "marker") or "marker").lower()
+        if peak_mode in {"off", "none", "なし"}:
+            peaks = None
+        elif peaks is None and peak_mode in {"peaks_only", "peak_bars"}:
+            peaks = vals.copy()
+        if peak_mode == "peak_bars" and peaks is not None:
+            vals = peaks
+            peaks = None
 
         for b, value in enumerate(vals[:int(style.bars)]):
             raw_v = float(np.clip(value, 0.0, 1.0))
@@ -351,32 +359,33 @@ class BarSpectrumPart:
             if digital_enabled:
                 if layout.mode == "dual":
                     center = int(layout.base_y)
-                    self._append_digital_segments(
-                        primitives,
-                        band_index=b,
-                        x0=x0,
-                        x1=x1,
-                        base_y=center,
-                        max_height=layout.max_height,
-                        value=v,
-                        direction=-1,
-                        frame_top=frame_top,
-                        frame_bottom=frame_bottom,
-                        color_mode=color_mode,
-                    )
-                    self._append_digital_segments(
-                        primitives,
-                        band_index=b,
-                        x0=x0,
-                        x1=x1,
-                        base_y=center,
-                        max_height=layout.max_height,
-                        value=v,
-                        direction=1,
-                        frame_top=frame_top,
-                        frame_bottom=frame_bottom,
-                        color_mode=color_mode,
-                    )
+                    if peak_mode != "peaks_only":
+                        self._append_digital_segments(
+                            primitives,
+                            band_index=b,
+                            x0=x0,
+                            x1=x1,
+                            base_y=center,
+                            max_height=layout.max_height,
+                            value=v,
+                            direction=-1,
+                            frame_top=frame_top,
+                            frame_bottom=frame_bottom,
+                            color_mode=color_mode,
+                        )
+                        self._append_digital_segments(
+                            primitives,
+                            band_index=b,
+                            x0=x0,
+                            x1=x1,
+                            base_y=center,
+                            max_height=layout.max_height,
+                            value=v,
+                            direction=1,
+                            frame_top=frame_top,
+                            frame_bottom=frame_bottom,
+                            color_mode=color_mode,
+                        )
                     if peak_v is not None:
                         self._append_digital_peak_segments(
                             primitives,
@@ -385,7 +394,7 @@ class BarSpectrumPart:
                             x1=x1,
                             base_y=center,
                             max_height=layout.max_height,
-                            current_value=raw_v,
+                            current_value=(0.0 if peak_mode == "peaks_only" else raw_v),
                             peak_value=peak_v,
                             direction=-1,
                             frame_top=frame_top,
@@ -399,7 +408,7 @@ class BarSpectrumPart:
                             x1=x1,
                             base_y=center,
                             max_height=layout.max_height,
-                            current_value=raw_v,
+                            current_value=(0.0 if peak_mode == "peaks_only" else raw_v),
                             peak_value=peak_v,
                             direction=1,
                             frame_top=frame_top,
@@ -407,19 +416,20 @@ class BarSpectrumPart:
                             color_mode=color_mode,
                         )
                 else:
-                    self._append_digital_segments(
-                        primitives,
-                        band_index=b,
-                        x0=x0,
-                        x1=x1,
-                        base_y=int(layout.base_y),
-                        max_height=layout.max_height,
-                        value=v,
-                        direction=-1,
-                        frame_top=frame_top,
-                        frame_bottom=frame_bottom,
-                        color_mode=color_mode,
-                    )
+                    if peak_mode != "peaks_only":
+                        self._append_digital_segments(
+                            primitives,
+                            band_index=b,
+                            x0=x0,
+                            x1=x1,
+                            base_y=int(layout.base_y),
+                            max_height=layout.max_height,
+                            value=v,
+                            direction=-1,
+                            frame_top=frame_top,
+                            frame_bottom=frame_bottom,
+                            color_mode=color_mode,
+                        )
                     if peak_v is not None:
                         self._append_digital_peak_segments(
                             primitives,
@@ -428,7 +438,7 @@ class BarSpectrumPart:
                             x1=x1,
                             base_y=int(layout.base_y),
                             max_height=layout.max_height,
-                            current_value=raw_v,
+                            current_value=(0.0 if peak_mode == "peaks_only" else raw_v),
                             peak_value=peak_v,
                             direction=-1,
                             frame_top=frame_top,
@@ -455,7 +465,7 @@ class BarSpectrumPart:
                 center = int(layout.base_y)
                 y0 = max(frame_top, center - h)
                 y1 = min(frame_bottom, center)
-                if y1 > y0:
+                if y1 > y0 and peak_mode != "peaks_only":
                     primitives.append(self._primitive(
                         body_x0, body_x1, y0, y1,
                         kind=("top_rounded_rect" if int(style.corner_radius) > 0 else "rect"),
@@ -464,7 +474,7 @@ class BarSpectrumPart:
                     ))
                 y0 = max(frame_top, center)
                 y1 = min(frame_bottom, center + h)
-                if y1 > y0:
+                if y1 > y0 and peak_mode != "peaks_only":
                     primitives.append(self._primitive(
                         body_x0, body_x1, y0, y1,
                         kind=("bottom_rounded_rect" if int(style.corner_radius) > 0 else "rect"),
@@ -479,7 +489,7 @@ class BarSpectrumPart:
                         x1=x1,
                         base_y=center,
                         max_height=layout.max_height,
-                        current_value=raw_v,
+                        current_value=(0.0 if peak_mode == "peaks_only" else raw_v),
                         peak_value=peak_v,
                         direction=-1,
                         frame_top=frame_top,
@@ -493,7 +503,7 @@ class BarSpectrumPart:
                         x1=x1,
                         base_y=center,
                         max_height=layout.max_height,
-                        current_value=raw_v,
+                        current_value=(0.0 if peak_mode == "peaks_only" else raw_v),
                         peak_value=peak_v,
                         direction=1,
                         frame_top=frame_top,
@@ -503,7 +513,7 @@ class BarSpectrumPart:
             else:
                 y0 = max(frame_top, int(layout.base_y) - h)
                 y1 = min(frame_bottom, int(layout.base_y))
-                if y1 > y0:
+                if y1 > y0 and peak_mode != "peaks_only":
                     primitives.append(self._primitive(body_x0, body_x1, y0, y1, color=top_outer, color2=bottom_inner))
                 if peak_v is not None:
                     self._append_normal_peak(
@@ -513,7 +523,7 @@ class BarSpectrumPart:
                         x1=x1,
                         base_y=int(layout.base_y),
                         max_height=layout.max_height,
-                        current_value=raw_v,
+                        current_value=(0.0 if peak_mode == "peaks_only" else raw_v),
                         peak_value=peak_v,
                         direction=-1,
                         frame_top=frame_top,

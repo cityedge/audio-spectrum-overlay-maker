@@ -15,6 +15,7 @@ import numpy as np
 
 from spectrum_types import LogFn
 from spectrum_utils import find_external_tool, log, no_window_subprocess_kwargs, resolve_external_tool
+from spectrum_cancel import RenderCancelToken
 
 def check_environment() -> tuple[bool, str]:
     missing = []
@@ -49,7 +50,14 @@ def run_ffprobe_duration(path: Path) -> float | None:
         return None
     return None
 
-def decode_audio_to_float32_mono(path: Path, sample_rate: int, start: float, duration: float | None, log_callback: LogFn = None) -> np.ndarray:
+def decode_audio_to_float32_mono(
+    path: Path,
+    sample_rate: int,
+    start: float,
+    duration: float | None,
+    log_callback: LogFn = None,
+    cancel_token: RenderCancelToken | None = None,
+) -> np.ndarray:
     cmd = [resolve_external_tool("ffmpeg"), "-hide_banner", "-loglevel", "error"]
     if start > 0:
         cmd += ["-ss", f"{start:.6f}"]
@@ -61,13 +69,44 @@ def decode_audio_to_float32_mono(path: Path, sample_rate: int, start: float, dur
         "-f", "f32le", "-acodec", "pcm_f32le", "pipe:1",
     ]
     log("Loading audio...", log_callback)
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **no_window_subprocess_kwargs())
+    if cancel_token is not None:
+        cancel_token.raise_if_cancelled()
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **no_window_subprocess_kwargs())
+    if cancel_token is not None:
+        cancel_token.register_process(proc)
+    try:
+        while True:
+            try:
+                stdout, stderr = proc.communicate(timeout=0.1)
+                break
+            except subprocess.TimeoutExpired:
+                if cancel_token is not None:
+                    cancel_token.raise_if_cancelled()
+    finally:
+        if cancel_token is not None:
+            if cancel_token.is_cancelled and proc.poll() is None:
+                try:
+                    proc.terminate()
+                except OSError:
+                    pass
+            if cancel_token.is_cancelled:
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    try:
+                        proc.kill()
+                    except OSError:
+                        pass
+                    proc.wait()
+            cancel_token.unregister_process(proc)
+    if cancel_token is not None:
+        cancel_token.raise_if_cancelled()
     if proc.returncode != 0:
-        stderr = proc.stderr.decode("utf-8", errors="replace")
-        raise RuntimeError("Failed to load audio with ffmpeg.\n" + stderr)
-    if not proc.stdout:
+        stderr_text = stderr.decode("utf-8", errors="replace")
+        raise RuntimeError("Failed to load audio with ffmpeg.\n" + stderr_text)
+    if not stdout:
         raise RuntimeError("No audio data was loaded.")
-    audio = np.frombuffer(proc.stdout, dtype=np.float32).copy()
+    audio = np.frombuffer(stdout, dtype=np.float32).copy()
     audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
     audio = np.clip(audio, -1.0, 1.0)
     if audio.size == 0:

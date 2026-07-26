@@ -1,4 +1,4 @@
-# Audio Spectrum Overlay Maker v1.3.2 Development Notes
+# Audio Spectrum Overlay Maker v1.4.0 Development Notes
 
 ## Architecture
 
@@ -16,6 +16,7 @@ spectrum_parts.py       bar-spectrum visual part
 spectrum_primitives.py  primitive rendering
 spectrum_draw.py        drawing facade
 spectrum_post_transform.py post-render frame coordinate mapping
+spectrum_cancel.py      cooperative render cancellation
 spectrum_encoder.py     ffmpeg rawvideo encoder
 spectrum_workflow.py    preview/full render workflows
 spectrum_engine.py      compatibility facade
@@ -46,6 +47,13 @@ Edge Glow is intentionally before Post Transform. It is part of the rendered mai
 High-frequency boost is display-only. `transform_spectrum_data()` can derive boosted display values by adding a log-frequency dB slope to `SpectrumData.raw_db` and remapping through Dynamic motion. Audio-reactive scale receives unboosted display values through `render_video(..., audio_values=...)`, so visual high-band balancing does not change the pulse trigger.
 
 The high-frequency boost curves intentionally use steep exponents: Gentle = 2, Standard = 4, Moderately Steep = 6, Steep = 8. This keeps mid bands mostly stable while allowing sparse upper bands to be lifted strongly.
+
+Peak hold generation is unchanged. `RenderStyle.peak_hold_mode` controls how `peak_values` are drawn:
+
+- `off`: no peak hold
+- `marker`: draw the normal bars plus peak markers
+- `peaks_only`: draw only peak markers
+- `peak_bars`: draw held peak values as the bar body
 
 Edge Glow modes:
 
@@ -81,6 +89,22 @@ color_mode       = vertical
 The main video keeps the user's normal `RenderStyle`. Pair-output ON/OFF does not change the main output.
 
 When pair output is enabled, main and matte `render_video()` calls are submitted to a two-worker `ThreadPoolExecutor`. Both receive the same values and transform settings.
+
+## Render Cancellation Design
+
+`RenderCancelToken` is shared by decoding and all active encoders.
+
+- Default cancellation terminates active ffmpeg processes and the workflow removes incomplete main/matte files.
+- With `keep_partial_videos` enabled, encoding stops at each encoder's next frame boundary, stdin is closed normally, and ffmpeg finalizes a playable partial MP4.
+- Parallel main/matte encoders are deliberately allowed to stop at different frame counts in keep-partial mode. Such files are inspection artifacts, not a frame-synchronized compositing pair.
+
+Audio decoding remains cancellable in both modes; no partial output exists before encoding begins.
+
+## Visible and Internal Bar Counts
+
+Visible-bar choices and Advanced Custom internal-analysis choices are both `18`, `24`, `32`, `48`, `64`, `80`, `96`, `112`, and `128`.
+
+Qualitative settings preserve their existing behavior: at low visible counts they can select more internal analysis bands for smoother motion. Advanced Custom can explicitly match both counts when one-to-one band mapping is required.
 
 ## Post Transform Design
 
@@ -121,7 +145,7 @@ scale = 100 + (target_scale - 100) * energy
 
 ## Presets
 
-System presets are defined in `preset_manager.py`. v1.3.2 ships 12 system presets. User presets live in `presets_user.json`, which is ignored by Git and is not part of the release zip.
+System presets are defined in `preset_manager.py`. v1.4.0 ships 12 system presets. User presets live in `presets_user.json`, which is ignored by Git and is not part of the release zip.
 
 ## ffmpeg / ffprobe Lookup
 

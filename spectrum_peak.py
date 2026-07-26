@@ -29,6 +29,9 @@ def compute_peak_hold_values(
     When integer scrolling is active, peaks are tracked in source-band order and
     then scrolled back into display order so held markers move with the bars.
     """
+    peak_mode = str(getattr(style, "peak_hold_mode", "marker") or "marker").lower()
+    if peak_mode in {"off", "none", "なし"}:
+        return None
     if not bool(getattr(style, "peak_hold_enabled", False)):
         return None
 

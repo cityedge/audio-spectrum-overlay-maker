@@ -1,33 +1,26 @@
-# Audio Spectrum Overlay Maker v1.3.2 Release Notes
+# Audio Spectrum Overlay Maker v1.4.0 Release Notes
 
-v1.3.2 is the high-frequency boost tuning release on top of the Post Transform generation.
+v1.4.0 is the spectrum-density and render-control release. It completes the peak-hold display expansion and adds practical control for long or expensive renders.
 
 ## Highlights
 
-- Post Transform layer is now part of the main workflow.
-- Edge Glow can be enabled for black-background main output to soften visible compression/compositing outlines. It now uses one dropdown: None, Light, Standard, or Strong.
-- High-frequency boost can lift sparse upper bands with Gentle, Standard, Moderately Steep, and Steep curves up to 36 dB without affecting audio-reactive scaling input.
-- Static rotation, vertical trapezoid, horizontal trapezoid, and combined transforms are available from the Visual tab.
-- Audio-reactive scaling can pulse or shrink the whole spectrum based on volume.
-- Low-band-only detection is available for audio-reactive scaling, making kick and bass-driven pulse effects easier to tune.
-- Peak hold, digital bars, scrolling, gradients, and pair output all work through the same render pipeline.
-- Main and matte pair output can render in parallel.
-- Motion preview now has 2-second and 10-second buttons.
-- Bundled SRT Spectrum Video Composer files have been refreshed without changing the Audio Spectrum Overlay Maker handoff interface.
-- System presets now include:
-  - `10 Trapezoid Neon`
-  - `11 Vertical Scroll`
-  - `12 Pulsating LED Scroll`
+- Peak Hold is a display mode dropdown: Off, Peak Markers, Peaks Only, or Peaks as Bars.
+- Visible bar counts now reach 128, with 80, 96, and 112 available between 64 and 128.
+- Advanced Custom internal-analysis choices now mirror visible bar choices, so 80/96/112/128 can use one analysis band per visible bar.
+- Preview-video and full-video rendering can be cancelled from the main action area.
+- Default cancellation removes incomplete main and matte MP4 files.
+- Advanced `Keep Partial Videos on Cancel` finalizes and retains playable partial MP4s for visual inspection.
 
-## Compatibility Notes
+## Partial Video Compatibility
 
-- Existing no-transform settings continue to behave as identity Post Transform.
-- Main and matte videos use the same Post Transform settings.
-- The canvas size is preserved; out-of-canvas transformed areas are clipped.
-- Newly exposed areas are black in the main video and white in the matte video.
-- `presets_user.json` remains a local user file and is not included in the release zip.
-- `ffmpeg.exe` and `ffprobe.exe` are not included in the release zip; only `bin\README.txt` is included.
+When partial-video retention is enabled with pair output, main and matte encoders stop independently. Their durations can differ, so retained files are not a compositing-ready main/matte pair. Full renders that complete normally retain the usual frame-alignment guarantee.
 
-## Known Cost
+## Existing v1.3.x Features
 
-Post Transform effects are intentionally flexible and can be CPU-heavy. Heavy combinations such as digital bars, scrolling, peak hold, high-frequency boost, trapezoid, rotation, audio-reactive scaling, and matte pair output can take longer than real time to render.
+v1.4.0 continues to include the Post Transform layer, rotation, vertical/horizontal trapezoid transforms, audio-reactive scaling, edge glow, high-frequency boost, scrolling, digital bars, parallel main/matte output, and SRT Spectrum Video Composer handoff.
+
+## Packaging Notes
+
+- `ffmpeg.exe` and `ffprobe.exe` are not included in the source release zip; only `bin\README.txt` is included.
+- `final_composer.py` and `USER_MANUAL_SSVC.md` are included without changing the handoff interface.
+- PyInstaller EXE builds are produced separately from the source release package.

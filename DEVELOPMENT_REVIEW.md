@@ -1,54 +1,38 @@
-# Audio Spectrum Overlay Maker v1.3.2 Release Review
+# Audio Spectrum Overlay Maker v1.4.0 Release Review
 
 ## Scope
 
-v1.3.2 stabilizes the high-frequency boost tuning pass on top of the v1.3.1 edge-glow release. The reviewed scope is:
+v1.4.0 packages the following additions on top of the v1.3.2 release:
 
-- peak-hold drawing
-- digital segmented bars
-- scrolling and gradients
-- Post Transform layer
-- rotation / vertical trapezoid / horizontal trapezoid
-- audio-reactive scaling
-- edge glow
-- main/matte pair output
-- SRT Spectrum Video Composer handoff
-- system presets
-- release packaging
+- Peak Hold display modes: Peak Markers, Peaks Only, and Peaks as Bars.
+- Render cancellation for preview-video and full-video rendering.
+- Optional preservation of finalized partial videos on cancellation.
+- Visible-bar choices through 128.
+- Matching Advanced Custom internal-analysis choices through 128.
 
 ## Findings
 
-No release-blocking defect was found in the reviewed code paths.
+No release-blocking defect was found in the reviewed paths.
 
 The important behavioral contracts are preserved:
 
-- No-transform settings resolve to identity Post Transform.
-- Audio-reactive scaling is disabled unless the explicit checkbox is ON.
-- Audio-reactive scale `100%` remains neutral.
-- Audio-reactive scale values below `100%` shrink instead of enlarge.
-- Edge Glow is applied only to black-background main output and is disabled for matte output.
-- Edge Glow is automatically disabled when the detailed background color is not black.
-- Main and matte outputs use the same transformed frame geometry.
-- Pair output keeps no-overwrite filename pairing.
+- Normal main/matte renders receive identical analysis values, peak values, and Post Transform settings.
+- Full renders that complete normally remain frame-aligned for compositing.
+- Default cancellation terminates active encoders and removes incomplete outputs.
+- Keep-partial cancellation closes each active encoder normally, leaving playable partial MP4 files when encoding has started.
+- Kept main/matte partial files can have different durations and are documented as inspection-only artifacts.
+- Visible 80/96/112/128 choices remain within the existing analysis, transform, drawing, and encoding paths.
+- Advanced Custom can match internal-analysis and visible-bar counts one-to-one.
 - `final_composer.py` is not imported during normal app startup.
-- User presets remain outside the release package.
-
-## Design Notes
-
-Post Transform is correctly kept after complete frame drawing. Rotation, trapezoid, and scale are not embedded into the bar drawing layer. This keeps the drawing pipeline understandable and preserves compatibility with digital bars, peak hold, gradients, and matte output.
-
-Audio-reactive scaling is intentionally implemented as a Post Transform parameter driven by per-frame bar values. The low-band-only option uses the low-frequency side of the already transformed display bars, which is practical for kick/bass-driven pulse effects.
-
-Edge Glow is a drawing-stage main-output effect, applied before Post Transform. It spreads the rendered spectrum color by one pixel in four directions, with fixed Light, Standard, and Strong strengths. The original frame is restored on top. This keeps the matte geometry unchanged while reducing visible compression/compositing outlines around digital pieces, rounded bars, and peak-hold fragments.
-
-Main and matte rendering now runs in parallel when pair output is enabled. Both renders receive the same `bar_values`, `peak_values`, `TransformSettings`, and `PostTransformSettings`, so the geometry contract is preserved.
+- User presets and ffmpeg binaries remain outside the source release package.
 
 ## Residual Risks
 
-- Heavy Post Transform combinations are CPU-bound and can be slow.
-- GUI layout should still be visually checked on the target Windows environment before publishing screenshots.
+- Heavy Post Transform combinations remain CPU-bound and can be slow.
+- Keep-partial output is intentionally not frame-synchronized between main and matte.
+- GUI layout should still be visually checked on the target Windows environment before publishing screenshots or an EXE build.
 - The app depends on a local ffmpeg / ffprobe installation or binaries placed in `bin`.
 
 ## Release Decision
 
-Proceed with v1.3.2 packaging after final visual confirmation.
+Proceed with v1.4.0 source packaging and separate PyInstaller EXE creation.
