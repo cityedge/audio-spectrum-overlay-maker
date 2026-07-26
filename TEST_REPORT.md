@@ -29,6 +29,7 @@
   - curve exponents are high-end weighted: Gentle = 2, Standard = 4, Moderately Steep = 6, Steep = 8
   - boosted display values rise above unboosted values in high bands
   - audio-reactive scaling can receive unboosted values separately from display values
+  - still preview uses synthetic raw dB data, so boost amount and curve are reflected without an audio file
 - Peak Hold mode check: passed
   - legacy ON presets normalize to Peak Markers
   - Off disables peak generation

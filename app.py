@@ -152,8 +152,9 @@ from spectrum_engine import (
     find_loud_segment_start,
     parse_color,
     render_audio_to_video,
-    still_preview_values,
+    still_preview_spectrum_data,
     suggest_frequency_range,
+    transform_spectrum_data,
 )
 from spectrum_utils import no_window_subprocess_kwargs, runtime_app_dir
 from ui_tooltips import ToolTip
@@ -2108,7 +2109,11 @@ class App(tk.Tk):
             style = self.current_style()
             if style.width <= 0 or style.height <= 0:
                 return
-            vals = still_preview_values(style.bars)
+            motion = self.current_motion()
+            transform = self.current_transform()
+            analysis_bars = max(int(style.bars), int(motion.analysis_bands))
+            data = still_preview_spectrum_data(analysis_bars, motion, style.fps)
+            vals = transform_spectrum_data(data, transform, motion=motion)[0]
             frame = draw_spectrum_frame(vals, style)
             frame = PostTransformApplier(self.current_post_transform(), style.width, style.height, style.fps, style.background_color).apply(frame, 0, vals)
             self.still_frame_array = frame

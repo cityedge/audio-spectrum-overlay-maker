@@ -59,6 +59,7 @@ from spectrum_draw import (
     draw_spectrum_frame,
     compute_band_color_offset,
     still_preview_values,
+    still_preview_spectrum_data,
     generate_dummy_dynamic_values,
 )
 from spectrum_encoder import open_ffmpeg_encoder, render_video
@@ -84,7 +85,7 @@ __all__ = [
     "Primitive", "create_frame", "draw_primitives",
     "Bounds", "CanvasSpec", "Scene", "BarLayout", "BarSpectrumPart",
     "build_layout", "build_bar_scene", "draw_rect", "draw_rounded_rect", "draw_top_rounded_rect", "draw_bottom_rounded_rect", "draw_spectrum_frame", "compute_band_color_offset",
-    "still_preview_values", "generate_dummy_dynamic_values",
+    "still_preview_values", "still_preview_spectrum_data", "generate_dummy_dynamic_values",
     "open_ffmpeg_encoder", "render_video",
     "find_loud_segment_start", "suggest_frequency_range", "analyze_preview_segment",
     "render_audio_to_video", "build_default_output_path", "build_matte_output_path", "unique_output_pair",

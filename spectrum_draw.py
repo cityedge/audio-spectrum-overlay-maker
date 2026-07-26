@@ -10,7 +10,7 @@ from typing import List, Tuple
 
 import numpy as np
 
-from spectrum_types import MotionSettings, RGB, RenderStyle
+from spectrum_types import MotionSettings, RGB, RenderStyle, SpectrumData
 from spectrum_motion import map_db_to_dynamic_values
 from spectrum_parts import BarSpectrumPart
 from spectrum_primitives import (
@@ -107,6 +107,36 @@ def still_preview_values(bars: int) -> np.ndarray:
         + 0.15 * np.sin(2.0 * np.pi * (x * 4.0 + 0.2)) ** 2
     )
     return np.clip(values, 0.04, 1.0)
+
+
+def still_preview_spectrum_data(bars: int, motion: MotionSettings, fps: int) -> SpectrumData:
+    """Create deterministic synthetic spectrum data for the still preview.
+
+    The raw dB values let display-only corrections, including high-frequency
+    boost, use the same transform path as real audio without requiring a file.
+    """
+    bands = max(1, int(bars))
+    base_values = still_preview_values(bands)
+    min_db = float(motion.min_db)
+    max_db = max(min_db + 1.0, float(motion.max_db))
+    # Keep the familiar preview silhouette while leaving headroom for a visible
+    # high-frequency dB boost.
+    raw_db = min_db + (0.22 + 0.68 * base_values) * (max_db - min_db)
+    raw_db = raw_db.astype(np.float32, copy=False)[None, :]
+    hi = min(float(motion.freq_max), float(motion.sample_rate) / 2.0)
+    lo = max(1.0, float(motion.freq_min))
+    if hi <= lo:
+        hi = lo + 1.0
+    return SpectrumData(
+        values=map_db_to_dynamic_values(raw_db, motion),
+        raw_db=raw_db,
+        freq_edges=np.geomspace(lo, hi, bands + 1).astype(np.float32),
+        fps=max(1, int(fps)),
+        sample_rate=int(motion.sample_rate),
+        analysis_bands=bands,
+        freq_min=lo,
+        freq_max=hi,
+    )
 
 def generate_dummy_dynamic_values(frames: int, bars: int, motion: MotionSettings) -> np.ndarray:
     """Create deterministic pseudo-audio Dynamic values for GUI motion preview."""
