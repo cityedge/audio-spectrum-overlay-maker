@@ -1,10 +1,14 @@
-# Audio Spectrum Overlay Maker v1.4.0
+# Audio Spectrum Overlay Maker v1.4.1
 
 Audio Spectrum Overlay Maker is a local Windows Python/Tkinter application for generating silent MP4 spectrum-analyzer overlay videos from audio files.
 
 Audio Spectrum Overlay Maker は、音源ファイルを解析して、音に反応するスペアナ風オーバーレイ動画を生成するローカルアプリです。動画編集ソフトで背景映像や字幕動画に重ねるための素材作成を目的にしています。
 
 ## Main Features
+
+v1.4.1 はデジタル描画を大幅に高速化しました。設定変更は不要で、プレビュー、メイン動画、マット動画に自動適用されます。見た目とピークホールドの仕様は維持しています。
+
+Digital rendering now caches segment shapes and colors. In a 720×280, 96-bar, 64-segment test with combined effects, a two-second main/matte MP4 pair took 2.41 seconds instead of 19.70 seconds. Results depend on settings and hardware; see `TEST_REPORT.md` for conditions. High-frequency boost is also reflected in the still preview.
 
 - Silent MP4 spectrum overlay generation from WAV / MP3 / M4A / FLAC and other ffmpeg-readable audio files.
 - Single-sided and dual-sided bar display.
@@ -60,7 +64,7 @@ Top:    main video   -> Compare/Lighten
 
 The main and matte videos are generated from the same analyzed values and the same Post Transform settings. Bar height, peak hold, scrolling, rotation, trapezoid transforms, and audio-reactive scaling stay frame-aligned.
 
-When pair output is enabled, v1.4.0 renders the main and matte videos in parallel. Heavy Post Transform settings are still CPU-intensive, but pair output is significantly faster than rendering the two videos sequentially.
+When pair output is enabled, the main and matte videos render in parallel. Digital drawing is accelerated in v1.4.1; Post Transform and encoding still contribute to total rendering time.
 
 ## Post Transform Layer
 
@@ -74,7 +78,7 @@ Post Transform
 ffmpeg encoding
 ```
 
-Supported static transforms in v1.4.0:
+Supported transforms in v1.4.1:
 
 - Rotation around the canvas center.
 - Vertical trapezoid: negative values narrow the top, positive values narrow the bottom.
@@ -136,7 +140,7 @@ In Advanced Custom mode, the internal-analysis choices mirror the visible choice
 
 ## System Presets
 
-v1.4.0 includes these system presets:
+v1.4.1 includes these system presets:
 
 1. `01 Basic White`
 2. `02 Dual White`

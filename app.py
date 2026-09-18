@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Audio Spectrum Overlay Maker v1.4.0 GUI."""
+"""Audio Spectrum Overlay Maker v1.4.1 GUI."""
 from __future__ import annotations
 
 import importlib

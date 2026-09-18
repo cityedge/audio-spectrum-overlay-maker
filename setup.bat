@@ -3,7 +3,7 @@ chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
 
-echo Audio Spectrum Overlay Maker v1.4.0 setup
+echo Audio Spectrum Overlay Maker v1.4.1 setup
 echo.
 
 where py >nul 2>nul

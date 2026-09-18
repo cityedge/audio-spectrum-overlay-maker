@@ -1,4 +1,4 @@
-# Audio Spectrum Overlay Maker v1.4.0 Development Notes
+# Audio Spectrum Overlay Maker v1.4.1 Development Notes
 
 ## Architecture
 
@@ -14,6 +14,7 @@ spectrum_transform.py   display-bar aggregation and integer scrolling
 spectrum_peak.py        peak-hold values
 spectrum_parts.py       bar-spectrum visual part
 spectrum_primitives.py  primitive rendering
+spectrum_digital.py     cached digital-bar rasterization
 spectrum_draw.py        drawing facade
 spectrum_post_transform.py post-render frame coordinate mapping
 spectrum_cancel.py      cooperative render cancellation
@@ -26,6 +27,8 @@ spectrum_utils.py       shared utilities and tool lookup
 `app.py` should call the render pipeline through `spectrum_engine.py` / `spectrum_workflow.py` rather than duplicating analysis or encoding logic.
 
 ## Processing Order
+
+v1.4.1 routes digital frames through `spectrum_digital.draw_digital_frame()`. A bounded four-entry cache stores colored strips using the reference alpha blend. Each frame selects body/peak rows. Cached arrays are not mutated during rendering and can be shared by concurrent draws. Overlapping bar layouts fall back to ordered primitive rendering. Glow and Post Transform remain after completed frame drawing. Pixel-equivalence and MP4 checks are reproducible with `tests/test_digital_renderer.py` in the development repository.
 
 ```text
 audio decode
@@ -145,7 +148,7 @@ scale = 100 + (target_scale - 100) * energy
 
 ## Presets
 
-System presets are defined in `preset_manager.py`. v1.4.0 ships 12 system presets. User presets live in `presets_user.json`, which is ignored by Git and is not part of the release zip.
+System presets are defined in `preset_manager.py`. v1.4.1 ships 12 system presets. User presets live in `presets_user.json`, which is ignored by Git and is not part of the release zip.
 
 ## ffmpeg / ffprobe Lookup
 

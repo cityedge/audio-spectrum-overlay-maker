@@ -13,6 +13,7 @@ import numpy as np
 from spectrum_types import MotionSettings, RGB, RenderStyle, SpectrumData
 from spectrum_motion import map_db_to_dynamic_values
 from spectrum_parts import BarSpectrumPart
+from spectrum_digital import draw_digital_frame
 from spectrum_primitives import (
     create_frame,
     draw_primitives,
@@ -74,13 +75,17 @@ def build_bar_scene(values: np.ndarray, style: RenderStyle, band_color_offset: i
     return scene
 
 def draw_spectrum_frame(values: np.ndarray, style: RenderStyle, band_color_offset: int = 0, peak_values: np.ndarray | None = None) -> np.ndarray:
-    scene = build_bar_scene(values, style, band_color_offset=band_color_offset, peak_values=peak_values)
-    frame = create_frame(scene.canvas.width, scene.canvas.height, scene.canvas.background_color)
-    draw_primitives(frame, scene.primitives)
+    frame = None
+    if bool(getattr(style, "digital_enabled", False)):
+        frame = draw_digital_frame(values, style, band_color_offset, peak_values)
+    if frame is None:
+        scene = build_bar_scene(values, style, band_color_offset=band_color_offset, peak_values=peak_values)
+        frame = create_frame(scene.canvas.width, scene.canvas.height, scene.canvas.background_color)
+        draw_primitives(frame, scene.primitives)
     if bool(getattr(style, "edge_glow_enabled", False)):
         frame = apply_edge_glow(
             frame,
-            scene.canvas.background_color,
+            style.background_color,
             str(getattr(style, "edge_glow_mode", "standard") or "standard"),
         )
     return frame

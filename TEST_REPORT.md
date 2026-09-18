@@ -1,4 +1,26 @@
-# v1.4.0 Test Report
+# v1.4.1 Test Report
+
+## デジタル描画高速化の追加検証（2026-09-18）
+
+- デジタル専用描画経路を追加。形状・色・角丸の描画結果をキャッシュし、フレームごとに点灯する小片の行を選択する。
+- 通常バーの描画経路は維持。極端に狭いキャンバスでバーが重なる場合も従来の描画経路を使用する。
+- 160種類の組み合わせで従来経路と画素単位で完全一致。片側／両側、分割数、角丸、隙間、背景色、グラデーション、スクロール色位置、ガンマ、ピーク表示各モード、グローを含む。
+- 点灯境界の丸め、ピークの境界値、メイン／マットの並列描画、Post Transform後の一致を追加確認。自動テスト4件成功。
+- 720×280・96バー・64分割の描画単体測定（12フレーム平均、実行環境依存）：片側155.25→1.93ms、両側164.78→1.87ms。初回キャッシュ構築込みは片側6.28ms、両側4.76ms。
+- 同サイズの2秒・30fpsのメイン／マット同時MP4出力：19.696→2.410秒。両側デジタル、ピーク片、色スクロール、回転、縦横台形、音量連動拡大、メインの標準グローを併用。音声解析は含めず、固定シードの疑似音量を使用。
+- 従来／高速化後のMP4をデコードし、メインとマットそれぞれ全60フレームのハッシュが完全一致。
+- ルートのPythonファイルの構文解析およびappのインポート成功。GUI操作による実音源確認は未実施。
+- 検証動画：`output/digital_renderer_check/`。ユーザーによる実環境確認で約20倍の高速化が報告された（設定・環境に依存）。
+
+再実行コマンド（開発リポジトリのプロジェクトルート、プロジェクト内のPythonを使用。テストコードは配布ZIP対象外）：
+
+```powershell
+where.exe python
+.\.venv\Scripts\python.exe --version
+.\.venv\Scripts\python.exe -B tests/test_digital_renderer.py
+.\.venv\Scripts\python.exe -B tests/test_digital_renderer.py --benchmark
+.\.venv\Scripts\python.exe -B tests/test_digital_renderer.py --encode
+```
 
 ## Automated Checks
 
@@ -46,8 +68,8 @@
 - UI text import check: passed
   - reset labels exist in Japanese and English
 - Release package file list check: passed
-  - package: `output/audio_spectrum_overlay_maker_v1_4_0.zip`
-  - entries: 34
+  - package: `output/audio_spectrum_overlay_maker_v1_4_1.zip`
+  - entries: 35 (v1.4.0 contents plus `spectrum_digital.py`)
   - no `.venv`, `output`, `work`, `tests`, `__pycache__`, generated MP4, user preset, or ffmpeg executable entries
 
 ## Manual / User-Confirmed Checks
@@ -67,7 +89,7 @@
 
 ## Notes
 
-Heavy combinations of digital bars, scrolling, peak hold, rotation, trapezoid, audio-reactive scaling, edge glow, high-frequency boost, and matte output are expected to render slowly. This is accepted for v1.4.0 because Post Transform flexibility and visual tuning are the priority.
+v1.4.1 substantially reduces digital drawing cost. Post Transform, glow, audio analysis, and encoding still contribute to total rendering time. The measured speedups are not guarantees for every source or setting.
 
 ## Visible Bar Count
 

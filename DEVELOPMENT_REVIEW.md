@@ -1,8 +1,10 @@
-# Audio Spectrum Overlay Maker v1.4.0 Release Review
+# Audio Spectrum Overlay Maker v1.4.1 Release Review
 
 ## Scope
 
-v1.4.0 packages the following additions on top of the v1.3.2 release:
+v1.4.1 adds cached digital rendering and still-preview high-frequency boost reflection. Pixel-equivalence tests cover peak modes, colors, rounding, narrow-canvas fallback, concurrent main/matte rendering, and Post Transform. Decoded main/matte MP4 frames match the reference renderer. The user confirmed a substantial speedup in actual use.
+
+The following v1.4.0 features are retained:
 
 - Peak Hold display modes: Peak Markers, Peaks Only, and Peaks as Bars.
 - Render cancellation for preview-video and full-video rendering.
@@ -35,4 +37,4 @@ The important behavioral contracts are preserved:
 
 ## Release Decision
 
-Proceed with v1.4.0 source packaging and separate PyInstaller EXE creation.
+Proceed with v1.4.1 source packaging. PyInstaller EXE creation is handled separately by the user.

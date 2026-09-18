@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.4.1
+
+- デジタル描画を専用経路で高速化。小片の形状・色・角丸の描画結果を再利用し、多数のバー・分割数でも処理負荷を大幅に低減。
+- プレビュー、メイン動画、マット動画に自動適用。ピーク表示各モード、グラデーション、スクロール、グロー、Post Transformとの組み合わせを維持。
+- 従来経路との画素比較と、メイン／マットMP4をデコードした全フレームの一致を確認。
+- 高域ブーストの量とカーブを見た目プレビューにも反映。
+- Composer連携のインターフェイスと既存プリセット形式は変更なし。
+
 ## v1.4.0
 
 - Expanded the visible-bar choices through 128: 80, 96, 112, and 128 are now available in addition to the existing values. Advanced Custom internal-analysis choices now mirror the visible-bar choices.

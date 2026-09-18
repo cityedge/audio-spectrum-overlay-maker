@@ -12,7 +12,7 @@ from typing import Callable, Tuple
 
 import numpy as np
 
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 RGB = Tuple[int, int, int]
 LogFn = Callable[[str], None] | None
 
