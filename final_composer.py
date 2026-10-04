@@ -71,15 +71,26 @@ QUALITY_PRESETS = {
 
 COMPOSE_MODES = [
     "mask_alpha",
+    "multiply_add",
     "black_colorkey",
     "darken_lighten_experimental",
 ]
 
 COMPOSE_MODE_LABELS = {
     "mask_alpha": "標準：マスク動画をアルファとして使用",
+    "multiply_add": "半透明：マット乗算＋フロント加算",
     "black_colorkey": "簡易：黒背景を透過",
     "darken_lighten_experimental": "実験：比較(暗)＋比較(明)",
 }
+
+COMPOSE_MODE_LABELS_EN = {
+    "mask_alpha": "Standard: mask as alpha",
+    "multiply_add": "Translucent: matte multiply + front add",
+    "black_colorkey": "Simple: black background keying",
+    "darken_lighten_experimental": "Experimental: darken + lighten",
+}
+
+MASK_COMPOSE_MODES = ("mask_alpha", "multiply_add", "darken_lighten_experimental")
 
 ALIGNMENTS = {
     "下中央": 2,
@@ -197,7 +208,7 @@ TOOLTIPS = {
     "audio": {"ja": "最終動画に入れる音源です。選択すると出力名とタイトルが自動候補になります。", "en": "Audio for the final video. Selecting it auto-suggests the output filename and title."},
     "srt": {"ja": "SRT字幕ファイルです。字幕行タブに読み込まれます。", "en": "SRT subtitle file. Its lines are loaded into the subtitle-lines tab."},
     "spectrum_color": {"ja": "黒背景にカラースペアナが描かれたMP4です。対応する_matte_dark.mp4があれば自動読み込みします。", "en": "MP4 with colored spectrum bars on black. A matching _matte_dark.mp4 is auto-loaded if found."},
-    "spectrum_mask": {"ja": "白地に黒スペアナのマスク動画です。標準合成モードで使用します。", "en": "White-background/black-spectrum mask video used by the standard compositing mode."},
+    "spectrum_mask": {"ja": "白地に黒スペアナのマスク動画です。乗算＋加算方式では、灰色部分を半透明として扱うマットに使います。", "en": "White-background/black-spectrum mask. In multiply + add mode, gray matte areas preserve partial background visibility."},
     "output_mp4": {"ja": "これから作成する出力MP4の保存先です。既存ファイルである必要はありません。", "en": "Destination path for the output MP4. It does not need to exist yet."},
     "font": {"ja": "OSにインストールされているフォント名から選択します。", "en": "Choose from font families installed in the OS."},
     "font_size": {"ja": "焼き込み文字のサイズです。ASS字幕のFontsizeに反映します。", "en": "Burned-in text size. This maps to ASS Fontsize."},
@@ -212,7 +223,7 @@ TOOLTIPS = {
     "spec_pos": {"ja": "スペアナの左上位置です。出力解像度上のピクセル座標です。", "en": "Top-left position of the spectrum in output pixels."},
     "spec_size": {"ja": "スペアナの表示サイズです。", "en": "Displayed size of the spectrum layer."},
     "flip": {"ja": "カラースペアナとマスクに同じ反転を適用します。", "en": "Applies the same flip to color spectrum and mask."},
-    "compose_mode": {"ja": "通常は標準のマスク動画方式を使います。", "en": "Normally use the standard mask-video mode."},
+    "compose_mode": {"ja": "半透明素材には「マット乗算＋フロント加算」を選び、対応する白地のマットと黒背景のフロントを指定します。マットがない場合は黒背景透過になります。", "en": "For translucent assets, choose matte multiply + front add with a matching white-background matte and black-background front. Without a matte, black-background keying is used."},
     "resolution": {"ja": "最終動画の解像度です。「背景画像と同じサイズ」では背景画像を等倍で使います。", "en": "Final video resolution. Background-size mode uses the background image at native size."},
     "stillimage_tune": {"ja": "x264のstillimageチューニングを使います。静止画中心の動画向けですが、スペアナが大きい場合は容量が増えることがあります。", "en": "Uses x264 stillimage tuning. Useful for still-image videos, but large spectrum overlays may increase file size."},
     "fps": {"ja": "最終動画のフレームレートです。", "en": "Frame rate of the final video."},
@@ -578,7 +589,7 @@ def effective_compose_mode(settings: AppSettings) -> str | None:
     if not has_existing_file(settings.files.spectrum_color):
         return None
     mode = settings.spectrum.compose_mode
-    if mode in ("mask_alpha", "darken_lighten_experimental") and not has_existing_file(settings.files.spectrum_mask):
+    if mode in MASK_COMPOSE_MODES and not has_existing_file(settings.files.spectrum_mask):
         return "black_colorkey"
     return mode
 
@@ -1298,7 +1309,7 @@ def build_visual_filter_complex(
         return fc
 
     if mask_index is None:
-        # Darken/lighten needs a mask. Fall back to black colorkey instead of failing.
+        # Mask-based blend modes need a mask; otherwise use black colorkey.
         fc = (
             bg
             + f"{video_in(spectrum_index)}scale={spec.width}:{spec.height},format=rgba,"
@@ -1311,6 +1322,31 @@ def build_visual_filter_complex(
             + finish("[with_sub]")
         )
         return fc
+
+    if mode == "multiply_add":
+        # Use full-range RGB: YUV chroma has a neutral offset and cannot be added directly.
+        # Derive neutral canvases from the background to keep its timing and duration.
+        keep_background = opacity_factor < 0.999
+        split_labels = "[bg_main][white_base][black_base]" + ("[bg_ref]" if keep_background else "")
+        fc = (
+            bg
+            + f"[bg]format=gbrp,split={4 if keep_background else 3}{split_labels};"
+            + "[white_base]lutrgb=r=255:g=255:b=255[white];"
+            + "[black_base]lutrgb=r=0:g=0:b=0[black];"
+            + f"{video_in(spectrum_index)}scale={spec.width}:{spec.height},format=rgb24[spec_s0];"
+            + f"{video_in(mask_index)}scale={spec.width}:{spec.height},format=rgb24[mask_s0];"
+            + optional_flip_chain("[spec_s0]", spec, "[spec_s]")
+            + optional_flip_chain("[mask_s0]", spec, "[mask_s]")
+            + f"[white][mask_s]overlay={spec.x}:{spec.y}:shortest=0:format=rgb,format=gbrp[mask_full];"
+            + f"[black][spec_s]overlay={spec.x}:{spec.y}:shortest=0:format=rgb,format=gbrp[spec_full];"
+            + "[bg_main][mask_full]blend=all_mode=multiply[cut];"
+            + "[cut][spec_full]blend=all_mode=addition[with_spec];"
+        )
+        result_label = "with_spec"
+        if keep_background:
+            fc += f"[with_spec][bg_ref]blend=all_mode=normal:all_opacity={opacity_factor:.4f}[with_spec_op];"
+            result_label = "with_spec_op"
+        return fc + f"[{result_label}]{sub_filter}[with_sub];" + finish("[with_sub]")
 
     dark_bg = bg
     bg_label = "bg"
@@ -1345,7 +1381,7 @@ def build_visual_filter_complex(
 def build_filter_complex(settings: AppSettings, ass_path: str, duration_sec: float | None = None) -> str:
     mode = effective_compose_mode(settings)
     spectrum_index = 2 if mode is not None else None
-    mask_index = 3 if mode in ("mask_alpha", "darken_lighten_experimental") else None
+    mask_index = 3 if mode in MASK_COMPOSE_MODES else None
     return build_visual_filter_complex(
         settings,
         ass_path,
@@ -1379,7 +1415,7 @@ def build_ffmpeg_command(settings: AppSettings, ass_path: str) -> list[str]:
         background_input_count = 1
     audio_index = background_input_count
     spectrum_index = audio_index + 1 if mode is not None else None
-    mask_index = audio_index + 2 if mode in ("mask_alpha", "darken_lighten_experimental") else None
+    mask_index = audio_index + 2 if mode in MASK_COMPOSE_MODES else None
     fc = build_visual_filter_complex(
         settings,
         ass_path,
@@ -1397,7 +1433,7 @@ def build_ffmpeg_command(settings: AppSettings, ass_path: str) -> list[str]:
     ] + background_args + ["-i", files.audio]
     if mode is not None:
         cmd += ["-i", files.spectrum_color]
-    if mode in ("mask_alpha", "darken_lighten_experimental"):
+    if mode in MASK_COMPOSE_MODES:
         cmd += ["-i", files.spectrum_mask]
 
     cmd += [
@@ -1452,7 +1488,7 @@ def build_preview_png_command(settings: AppSettings, ass_path: str, preview_path
         background_chain = None
         background_input_count = 1
     spectrum_index = background_input_count if mode is not None else None
-    mask_index = background_input_count + 1 if mode in ("mask_alpha", "darken_lighten_experimental") else None
+    mask_index = background_input_count + 1 if mode in MASK_COMPOSE_MODES else None
     fc = build_visual_filter_complex(
         settings,
         ass_path,
@@ -1470,7 +1506,7 @@ def build_preview_png_command(settings: AppSettings, ass_path: str, preview_path
     ] + background_args
     if mode is not None:
         cmd += ["-ss", f"{preview_sec:.3f}", "-i", files.spectrum_color]
-    if mode in ("mask_alpha", "darken_lighten_experimental"):
+    if mode in MASK_COMPOSE_MODES:
         cmd += ["-ss", f"{preview_sec:.3f}", "-i", files.spectrum_mask]
     cmd += [
         "-filter_complex", fc,
@@ -1509,7 +1545,7 @@ def build_preview_video_command(settings: AppSettings, ass_path: str, preview_pa
         background_input_count = 1
     audio_index = background_input_count
     spectrum_index = audio_index + 1 if mode is not None else None
-    mask_index = audio_index + 2 if mode in ("mask_alpha", "darken_lighten_experimental") else None
+    mask_index = audio_index + 2 if mode in MASK_COMPOSE_MODES else None
     fc = build_visual_filter_complex(
         settings,
         ass_path,
@@ -1531,7 +1567,7 @@ def build_preview_video_command(settings: AppSettings, ass_path: str, preview_pa
     ]
     if mode is not None:
         cmd += ["-ss", f"{start_sec:.3f}", "-t", f"{duration_sec:.3f}", "-i", files.spectrum_color]
-    if mode in ("mask_alpha", "darken_lighten_experimental"):
+    if mode in MASK_COMPOSE_MODES:
         cmd += ["-ss", f"{start_sec:.3f}", "-t", f"{duration_sec:.3f}", "-i", files.spectrum_mask]
     cmd += [
         "-filter_complex", fc,
@@ -3061,10 +3097,11 @@ class App(Tk):
 
         comp = ttk.LabelFrame(f, text=self.t("compose_mode"))
         comp.pack(fill="x", padx=8, pady=8)
-        labels = [COMPOSE_MODE_LABELS[m] for m in COMPOSE_MODES]
-        self.mode_label_to_key = {COMPOSE_MODE_LABELS[m]: m for m in COMPOSE_MODES}
-        self.mode_key_to_label = {m: COMPOSE_MODE_LABELS[m] for m in COMPOSE_MODES}
-        self.compose_mode_label_var = StringVar(value=COMPOSE_MODE_LABELS.get(self.vars["compose_mode"].get(), COMPOSE_MODE_LABELS["mask_alpha"]))
+        mode_labels = COMPOSE_MODE_LABELS_EN if self.vars["language"].get() == "en" else COMPOSE_MODE_LABELS
+        labels = [mode_labels[m] for m in COMPOSE_MODES]
+        self.mode_label_to_key = {mode_labels[m]: m for m in COMPOSE_MODES}
+        self.mode_key_to_label = {m: mode_labels[m] for m in COMPOSE_MODES}
+        self.compose_mode_label_var = StringVar(value=mode_labels.get(self.vars["compose_mode"].get(), mode_labels["mask_alpha"]))
         mode = ttk.Combobox(comp, textvariable=self.compose_mode_label_var, values=labels, state="readonly", width=44)
         mode.grid(row=0, column=0, sticky="ew", padx=6, pady=5)
         comp.columnconfigure(0, weight=1)
@@ -3673,7 +3710,7 @@ class App(Tk):
         self.vars["flip_h"].set(sp.flip_horizontal)
         self.vars["flip_v"].set(sp.flip_vertical)
         self.vars["compose_mode"].set(sp.compose_mode)
-        self.compose_mode_label_var.set(self.mode_key_to_label.get(sp.compose_mode, COMPOSE_MODE_LABELS["mask_alpha"]))
+        self.compose_mode_label_var.set(self.mode_key_to_label.get(sp.compose_mode, self.mode_key_to_label["mask_alpha"]))
         self.vars["black_similarity"].set(sp.black_similarity)
         self.vars["black_blend"].set(sp.black_blend)
         self.vars["mask_binarize"].set(sp.mask_binarize)
