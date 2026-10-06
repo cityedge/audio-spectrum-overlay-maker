@@ -126,6 +126,7 @@ TRANSLATIONS = {
         "tab_spectrum": "スペアナ", "tab_output": "出力", "tab_advanced": "詳細", "tab_presets": "プリセット",
         "language": "言語／Language", "background": "背景画像", "audio": "音源", "srt": "SRT字幕",
         "spectrum_color": "カラースペアナ", "spectrum_mask": "マスク動画", "output_mp4": "出力MP4",
+        "icon_image1": "アイコン画像1", "icon_image2": "アイコン画像2",
         "select": "選択", "files_note": "作業に最低限必要なのは背景画像と音源だけです。スペアナ動画やSRTは任意です。スペアナ動画のみでマスク動画がない場合は、自動的に黒背景透過で処理します。",
         "reload_srt": "SRT再読み込み", "srt_note": "行を選択すると、その行の中央時刻がプレビュー時刻になります。",
         "start": "開始", "end": "終了", "body": "本文",
@@ -166,6 +167,7 @@ TRANSLATIONS = {
         "tab_spectrum": "Spectrum", "tab_output": "Output", "tab_advanced": "Advanced", "tab_presets": "Presets",
         "language": "Language", "background": "Background image", "audio": "Audio", "srt": "SRT subtitle",
         "spectrum_color": "Color spectrum", "spectrum_mask": "Mask video", "output_mp4": "Output MP4",
+        "icon_image1": "Icon image 1", "icon_image2": "Icon image 2",
         "select": "Browse", "files_note": "Only a background image and audio file are required. Spectrum video and SRT are optional. If a spectrum video is set without a mask video, black-background keying is used automatically.",
         "reload_srt": "Reload SRT", "srt_note": "Selecting a line sets the preview time to the middle of that subtitle line.",
         "start": "Start", "end": "End", "body": "Text",
@@ -203,6 +205,7 @@ TRANSLATIONS = {
 }
 
 TOOLTIPS = {
+    "icon_images": {"ja": "任意の画像です。元サイズのまま右下に下揃えで配置します。2枚なら1が左、2が右。右・下・画像間の余白は2pxです。透過PNGに対応し、スペアナ・タイトル・字幕より下に表示します。", "en": "Optional images at their original pixel size, bottom-aligned at the bottom right. Image 1 goes left of image 2, with 2px right, bottom and inter-image margins. PNG transparency is preserved. Icons appear below the spectrum, title and subtitles."},
     "language": {"ja": "画面表示とヒントの言語を切り替えます。", "en": "Switches the UI and tooltip language."},
     "background": {"ja": "動画の背景に使う静止画像です。等倍モードではリサイズせず、その画像サイズを出力解像度にします。", "en": "Still image used as the video background. In background-size mode, it is not resized and its size becomes the output resolution."},
     "audio": {"ja": "最終動画に入れる音源です。選択すると出力名とタイトルが自動候補になります。", "en": "Audio for the final video. Selecting it auto-suggests the output filename and title."},
@@ -785,6 +788,8 @@ class FileSettings:
     spectrum_color: str = ""
     spectrum_mask: str = ""
     output: str = ""
+    icon_image1: str = ""
+    icon_image2: str = ""
 
 
 @dataclass
@@ -1230,6 +1235,31 @@ def build_slideshow_background_inputs_and_chain(
     return args, "".join(filters), input_index
 
 
+def icon_image_paths(files: FileSettings) -> list[str]:
+    return [path.strip() for path in (files.icon_image1, files.icon_image2) if path.strip()]
+
+
+def icon_image_layout(files: FileSettings, width: int, height: int) -> list[tuple[str, int, int, int, int]]:
+    placements = []
+    right = width - 2
+    for path in reversed(icon_image_paths(files)):
+        size = get_image_size(path)
+        if size is None:
+            raise ValueError(f"アイコン画像を読み込めません / Cannot read icon image: {path}")
+        iw, ih = size
+        x, y = right - iw, height - 2 - ih
+        placements.append((path, x, y, iw, ih))
+        right = x - 2
+    return list(reversed(placements))
+
+
+def icon_input_args(settings: AppSettings) -> list[str]:
+    args = []
+    for path in icon_image_paths(settings.files):
+        args += ["-loop", "1", "-framerate", str(settings.output.fps), "-i", path]
+    return args
+
+
 def build_visual_filter_complex(
     settings: AppSettings,
     ass_path: str,
@@ -1240,6 +1270,7 @@ def build_visual_filter_complex(
     reset_overlay_pts: bool = False,
     duration_sec: float | None = None,
     background_chain: str | None = None,
+    icon_input_index: int | None = None,
 ) -> str:
     out = settings.output
     spec = settings.spectrum
@@ -1247,6 +1278,14 @@ def build_visual_filter_complex(
     opacity_factor = spectrum_opacity_factor(spec)
 
     bg = background_chain or build_background_chain(settings)
+    background_label = "bg"
+    for index, (_path, x, y, _iw, _ih) in enumerate(icon_image_layout(settings.files, out.width, out.height)):
+        if icon_input_index is None:
+            raise ValueError("Icon input index is required")
+        # RGB overlay preserves odd-sized icons and exact 2px placement without chroma rounding.
+        bg += f"[{icon_input_index + index}:v]setpts=PTS-STARTPTS,setsar=1,format=rgba[icon{index}];"
+        bg += f"[{background_label}][icon{index}]overlay={x}:{y}:shortest=0:format=rgb[bg_icon{index}];"
+        background_label = f"bg_icon{index}"
 
     def finish(label: str) -> str:
         tail = "null"
@@ -1266,7 +1305,7 @@ def build_visual_filter_complex(
 
     # Background + title/subtitles only. This is valid when no spectrum video is set.
     if mode is None or spectrum_index is None:
-        return bg + f"[bg]{sub_filter}[with_sub];" + finish("[with_sub]")
+        return bg + f"[{background_label}]{sub_filter}[with_sub];" + finish("[with_sub]")
 
     if mode == "mask_alpha":
         if mask_index is None:
@@ -1288,7 +1327,7 @@ def build_visual_filter_complex(
                 + mask_chain
                 + "[spec0][alpha0]alphamerge[speca0];"
                 + optional_flip_chain("[speca0]", spec, "[speca]")
-                + f"[bg][speca]overlay={spec.x}:{spec.y}:shortest=0[with_spec];"
+                + f"[{background_label}][speca]overlay={spec.x}:{spec.y}:shortest=0[with_spec];"
                 + f"[with_spec]{sub_filter}[with_sub];"
                 + finish("[with_sub]")
             )
@@ -1302,7 +1341,7 @@ def build_visual_filter_complex(
             + rgba_alpha_multiplier_filter(opacity_factor)
             + "[speca0];"
             + optional_flip_chain("[speca0]", spec, "[speca]")
-            + f"[bg][speca]overlay={spec.x}:{spec.y}:shortest=0[with_spec];"
+            + f"[{background_label}][speca]overlay={spec.x}:{spec.y}:shortest=0[with_spec];"
             + f"[with_spec]{sub_filter}[with_sub];"
             + finish("[with_sub]")
         )
@@ -1317,7 +1356,7 @@ def build_visual_filter_complex(
             + rgba_alpha_multiplier_filter(opacity_factor)
             + "[speca0];"
             + optional_flip_chain("[speca0]", spec, "[speca]")
-            + f"[bg][speca]overlay={spec.x}:{spec.y}:shortest=0[with_spec];"
+            + f"[{background_label}][speca]overlay={spec.x}:{spec.y}:shortest=0[with_spec];"
             + f"[with_spec]{sub_filter}[with_sub];"
             + finish("[with_sub]")
         )
@@ -1330,7 +1369,7 @@ def build_visual_filter_complex(
         split_labels = "[bg_main][white_base][black_base]" + ("[bg_ref]" if keep_background else "")
         fc = (
             bg
-            + f"[bg]format=gbrp,split={4 if keep_background else 3}{split_labels};"
+            + f"[{background_label}]format=gbrp,split={4 if keep_background else 3}{split_labels};"
             + "[white_base]lutrgb=r=255:g=255:b=255[white];"
             + "[black_base]lutrgb=r=0:g=0:b=0[black];"
             + f"{video_in(spectrum_index)}scale={spec.width}:{spec.height},format=rgb24[spec_s0];"
@@ -1349,10 +1388,10 @@ def build_visual_filter_complex(
         return fc + f"[{result_label}]{sub_filter}[with_sub];" + finish("[with_sub]")
 
     dark_bg = bg
-    bg_label = "bg"
+    bg_label = background_label
     result_label = "with_spec"
     if opacity_factor < 0.999:
-        dark_bg += "[bg]split=2[bg_main][bg_ref];"
+        dark_bg += f"[{background_label}]split=2[bg_main][bg_ref];"
         bg_label = "bg_main"
         result_label = "with_spec_op"
 
@@ -1389,6 +1428,7 @@ def build_filter_complex(settings: AppSettings, ass_path: str, duration_sec: flo
         mask_index=mask_index,
         out_label="outv",
         duration_sec=duration_sec,
+        icon_input_index=2 + int(mode is not None) + int(mode in MASK_COMPOSE_MODES),
     )
 
 def build_ffmpeg_command(settings: AppSettings, ass_path: str) -> list[str]:
@@ -1424,6 +1464,7 @@ def build_ffmpeg_command(settings: AppSettings, ass_path: str) -> list[str]:
         out_label="outv",
         duration_sec=audio_duration,
         background_chain=background_chain,
+        icon_input_index=background_input_count + 1 + int(mode is not None) + int(mode in MASK_COMPOSE_MODES),
     )
 
     cmd = [
@@ -1435,6 +1476,7 @@ def build_ffmpeg_command(settings: AppSettings, ass_path: str) -> list[str]:
         cmd += ["-i", files.spectrum_color]
     if mode in MASK_COMPOSE_MODES:
         cmd += ["-i", files.spectrum_mask]
+    cmd += icon_input_args(settings)
 
     cmd += [
         "-filter_complex", fc,
@@ -1498,6 +1540,7 @@ def build_preview_png_command(settings: AppSettings, ass_path: str, preview_path
         final_scale=(pw, ph),
         reset_overlay_pts=True,
         background_chain=background_chain,
+        icon_input_index=background_input_count + int(mode is not None) + int(mode in MASK_COMPOSE_MODES),
     )
     cmd = [
         ffmpeg,
@@ -1508,6 +1551,7 @@ def build_preview_png_command(settings: AppSettings, ass_path: str, preview_path
         cmd += ["-ss", f"{preview_sec:.3f}", "-i", files.spectrum_color]
     if mode in MASK_COMPOSE_MODES:
         cmd += ["-ss", f"{preview_sec:.3f}", "-i", files.spectrum_mask]
+    cmd += icon_input_args(settings)
     cmd += [
         "-filter_complex", fc,
         "-map", "[previewv]",
@@ -1555,6 +1599,7 @@ def build_preview_video_command(settings: AppSettings, ass_path: str, preview_pa
         final_scale=(pw, ph),
         reset_overlay_pts=True,
         background_chain=background_chain,
+        icon_input_index=background_input_count + 1 + int(mode is not None) + int(mode in MASK_COMPOSE_MODES),
     )
     cmd = [
         ffmpeg,
@@ -1569,6 +1614,7 @@ def build_preview_video_command(settings: AppSettings, ass_path: str, preview_pa
         cmd += ["-ss", f"{start_sec:.3f}", "-t", f"{duration_sec:.3f}", "-i", files.spectrum_color]
     if mode in MASK_COMPOSE_MODES:
         cmd += ["-ss", f"{start_sec:.3f}", "-t", f"{duration_sec:.3f}", "-i", files.spectrum_mask]
+    cmd += icon_input_args(settings)
     cmd += [
         "-filter_complex", fc,
         "-map", "[previewv]",
@@ -1622,10 +1668,13 @@ def validate_settings(settings: AppSettings) -> None:
         "SRT字幕": files.srt,
         "カラースペアナ動画": files.spectrum_color,
         "マスク動画": files.spectrum_mask,
+        "アイコン画像1": files.icon_image1.strip(),
+        "アイコン画像2": files.icon_image2.strip(),
     }
     bad_optional = [name for name, path in optional_inputs.items() if path and not Path(path).exists()]
     if bad_optional:
         raise FileNotFoundError("指定された任意ファイルが見つかりません: " + ", ".join(bad_optional))
+    icon_image_layout(files, settings.output.width, settings.output.height)
 
     if not files.output:
         files.output = default_output_path_from_audio(files.audio)
@@ -1698,6 +1747,8 @@ class App(Tk):
             "srt": StringVar(),
             "spectrum_color": StringVar(),
             "spectrum_mask": StringVar(),
+            "icon_image1": StringVar(),
+            "icon_image2": StringVar(),
             "output": StringVar(),
             "font_name": StringVar(value="Yu Gothic"),
             "font_size": IntVar(value=54),
@@ -1928,6 +1979,9 @@ class App(Tk):
         lbl.grid(row=row, column=0, sticky="w", padx=4, pady=4)
         ent = Entry(parent, textvariable=var)
         ent.grid(row=row, column=1, sticky="ew", padx=4, pady=4)
+        if tip_key == "icon_images":
+            ent.bind("<FocusOut>", lambda _event: self._draw_preview())
+            ent.bind("<Return>", lambda _event: self._draw_preview())
         btn = Button(parent, text=self.t("select"), command=browse_cmd)
         btn.grid(row=row, column=2, padx=4, pady=4)
         if tip_key:
@@ -2929,10 +2983,12 @@ class App(Tk):
         self._row(f, self.t("srt"), self.vars["srt"], lambda: self.pick_file("srt", [("SubRip", "*.srt"), ("All", "*.*")]), 4, "srt")
         self._row(f, self.t("spectrum_color"), self.vars["spectrum_color"], lambda: self.pick_file("spectrum_color", [("MP4", "*.mp4"), ("All", "*.*")]), 5, "spectrum_color")
         self._row(f, self.t("spectrum_mask"), self.vars["spectrum_mask"], lambda: self.pick_file("spectrum_mask", [("MP4", "*.mp4"), ("All", "*.*")]), 6, "spectrum_mask")
-        self._row(f, self.t("output_mp4"), self.vars["output"], self.pick_output, 7, "output_mp4")
-        Label(f, text=self.t("files_note"), anchor="w", justify="left", wraplength=720).grid(row=8, column=0, columnspan=3, sticky="ew", padx=4, pady=(10, 4))
+        for row, key in enumerate(("icon_image1", "icon_image2"), start=7):
+            self._row(f, self.t(key), self.vars[key], lambda k=key: self.pick_file(k, [("Images", "*.png *.jpg *.jpeg *.bmp *.webp"), ("All", "*.*")]), row, "icon_images")
+        self._row(f, self.t("output_mp4"), self.vars["output"], self.pick_output, 9, "output_mp4")
+        Label(f, text=self.t("files_note"), anchor="w", justify="left", wraplength=720).grid(row=10, column=0, columnspan=3, sticky="ew", padx=4, pady=(10, 4))
         presets = self._build_presets_section(f)
-        presets.grid(row=9, column=0, columnspan=3, sticky="ew", padx=0, pady=(0, 8))
+        presets.grid(row=11, column=0, columnspan=3, sticky="ew", padx=0, pady=(0, 8))
 
 
     def _build_srt_tab(self) -> None:
@@ -3296,6 +3352,8 @@ class App(Tk):
         path = filedialog.askopenfilename(filetypes=filetypes)
         if path:
             self.vars[key].set(path)
+            if key in ("icon_image1", "icon_image2"):
+                self._draw_preview()
             if key == "audio":
                 self._auto_fill_output_from_audio()
                 self._auto_fill_title_from_audio()
@@ -3575,6 +3633,8 @@ class App(Tk):
                 srt=self.vars["srt"].get(),
                 spectrum_color=self.vars["spectrum_color"].get(),
                 spectrum_mask=self.vars["spectrum_mask"].get(),
+                icon_image1=self.vars["icon_image1"].get().strip(),
+                icon_image2=self.vars["icon_image2"].get().strip(),
                 output=self.vars["output"].get(),
             ),
             background=BackgroundSettings(
@@ -3649,6 +3709,8 @@ class App(Tk):
         self.vars["srt"].set(settings.files.srt)
         self.vars["spectrum_color"].set(settings.files.spectrum_color)
         self.vars["spectrum_mask"].set(settings.files.spectrum_mask)
+        self.vars["icon_image1"].set(settings.files.icon_image1)
+        self.vars["icon_image2"].set(settings.files.icon_image2)
         self.vars["output"].set(settings.files.output)
         background_mode = getattr(settings.background, "mode", "single")
         self.vars["background_mode"].set(background_mode)
@@ -3856,7 +3918,7 @@ class App(Tk):
             except Exception:
                 preview_ms = 0
             active_scene = active_slideshow_scene(self._settings(), preview_ms)
-            if active_scene is not None and active_scene.path:
+            if active_scene is not None:
                 bg_path = active_scene.path
         bg_drawn = False
         if bg_path and Path(bg_path).exists() and Image is not None and ImageTk is not None:
@@ -3880,11 +3942,29 @@ class App(Tk):
             except Exception:
                 bg_drawn = False
         if not bg_drawn:
-            c.create_rectangle(ox, oy, ox + dw, oy + dh, fill="#303030", outline="#777")
+            fill = "#000000" if active_scene is not None and not active_scene.path else "#303030"
+            c.create_rectangle(ox, oy, ox + dw, oy + dh, fill=fill, outline="#777")
             if bg_path and Image is None:
                 c.create_text(ox + 8, oy + 28, text="Pillow未導入のため背景表示不可", fill="#dddddd", anchor="nw")
 
         c.create_rectangle(ox, oy, ox + dw, oy + dh, outline="#777")
+
+        self.preview_icon_photos = []
+        if Image is not None and ImageTk is not None:
+            try:
+                files = FileSettings(icon_image1=self.vars["icon_image1"].get(), icon_image2=self.vars["icon_image2"].get())
+                for path, x, y, iw, ih in icon_image_layout(files, w, h):
+                    left, top, right, bottom = max(0, x), max(0, y), min(w, x + iw), min(h, y + ih)
+                    if left >= right or top >= bottom:
+                        continue
+                    with Image.open(path) as source:
+                        icon = source.convert("RGBA").crop((left - x, top - y, right - x, bottom - y))
+                    icon = icon.resize((max(1, round((right - left) * scale)), max(1, round((bottom - top) * scale))), Image.LANCZOS)
+                    photo = ImageTk.PhotoImage(icon)
+                    self.preview_icon_photos.append(photo)
+                    c.create_image(ox + left * scale, oy + top * scale, image=photo, anchor="nw", tags="icon_image")
+            except (OSError, ValueError):
+                pass
 
         # Spectrum rectangle preview. Show it only when a spectrum file is specified.
         if self.vars["spectrum_color"].get().strip():
