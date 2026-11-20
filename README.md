@@ -1,4 +1,4 @@
-# Audio Spectrum Overlay Maker v1.4.1
+# Audio Spectrum Overlay Maker v1.5.0
 
 Audio Spectrum Overlay Maker is a local Windows Python/Tkinter application for generating silent MP4 spectrum-analyzer overlay videos from audio files.
 
@@ -6,9 +6,9 @@ Audio Spectrum Overlay Maker は、音源ファイルを解析して、音に反
 
 ## Main Features
 
-v1.4.1 はデジタル描画を大幅に高速化しました。設定変更は不要で、プレビュー、メイン動画、マット動画に自動適用されます。見た目とピークホールドの仕様は維持しています。
+v1.5.0 は全画面キャンバス出力、不透明度0～100%、合成補助用の白PNG出力を追加しました。同梱SSVCを1.1.1へ更新し、生成済み素材の不透明度をJSONで渡します。初期設定は従来どおりのサイズ・不透明度100%です。
 
-Digital rendering now caches segment shapes and colors. In a 720×280, 96-bar, 64-segment test with combined effects, a two-second main/matte MP4 pair took 2.41 seconds instead of 19.70 seconds. Results depend on settings and hardware; see `TEST_REPORT.md` for conditions. High-frequency boost is also reflected in the still preview.
+Version 1.5.0 adds full-frame placement and matched translucent front/matte output. The cached digital rendering introduced in v1.4.1 and still-preview high-frequency boost remain available. Rendering speed depends on settings and hardware; see `TEST_REPORT.md` for conditions.
 
 - Silent MP4 spectrum overlay generation from WAV / MP3 / M4A / FLAC and other ffmpeg-readable audio files.
 - Single-sided and dual-sided bar display.
@@ -25,7 +25,10 @@ Digital rendering now caches segment shapes and colors. In a 720×280, 96-bar, 6
 - 2-second and 10-second in-app motion previews for quick checks.
 - 30-second preview MP4 and full-length render.
 - Render cancellation with optional retention of playable partial videos.
-- Optional main/matte pair output for Compare/Lighten + Compare/Darken compositing.
+- Optional matched front/matte output for Multiply + Add compositing; legacy Darken + Lighten remains available at 100% opacity.
+- Full-frame output canvas with nine anchors and horizontal/vertical offsets.
+- Integer opacity from 0% to 100%, with a checkerboard preview below 100%.
+- Optional all-white PNG for editors that substitute Difference for Add.
 - Parallel main/matte rendering when pair output is enabled.
 - SRT Spectrum Video Composer handoff through `final_composer.py`.
 - System presets and user presets.
@@ -47,24 +50,38 @@ Digital rendering now caches segment shapes and colors. In a 720×280, 96-bar, 6
 MP4 does not provide a practical true-alpha workflow for this use case. Audio Spectrum Overlay Maker therefore supports paired output:
 
 ```text
-Main video:
-  black background + normal spectrum material
+Main / front video:
+  black background + spectrum colors with opacity already applied
 
 Matte video:
-  white background + black spectrum shape
+  white background + black/gray spectrum shape (white preserves the background)
 ```
 
-Recommended editor stacking:
+For translucent assets, use this editor stacking:
 
 ```text
 Bottom: finished background video
-Middle: matte video  -> Compare/Darken
-Top:    main video   -> Compare/Lighten
+Middle: matte video  -> Multiply
+Top:    front video  -> Add
 ```
+
+The result is `F + B * M`, where the front `F` already contains opacity and `M` is the inverse alpha matte. Do not apply opacity or the matte to the front a second time. Keep editor layer opacity at 100%.
+
+At 100% opacity, legacy output is preserved, including background/glow settings. Darken + Lighten remains a legacy option for those assets; it does not reproduce translucency. At 100% with black background and no glow, Multiply + Add can also reduce dark bar outlines. For PowerDirector's Difference-based Add substitute, see the detailed instructions in `USER_GUIDE.md`.
 
 The main and matte videos are generated from the same analyzed values and the same Post Transform settings. Bar height, peak hold, scrolling, rotation, trapezoid transforms, and audio-reactive scaling stay frame-aligned.
 
-When pair output is enabled, the main and matte videos render in parallel. Digital drawing is accelerated in v1.4.1; Post Transform and encoding still contribute to total rendering time.
+When pair output is enabled, the main and matte videos render in parallel. Digital drawing retains the v1.4.1 acceleration; Post Transform and encoding still contribute to total rendering time.
+
+## Output Canvas and Opacity
+
+- `全画面キャンバスに出力` / `Full-frame output canvas`: OFF by default. Configure width/height, one of nine anchors, and offsets in the Visual tab. Defaults are 1920×1080, bottom-center, and zero offsets.
+- Placement does not resize the spectrum. Post Transform uses the original drawing dimensions; completed frames are placed onto the output canvas, with black padding for the front and white padding for the matte.
+- To avoid an internal rectangular video boundary in PowerDirector, use the final video's canvas size and keep both layers full-frame and aligned in the editor. Resizing them again can reintroduce that boundary.
+- `不透明度%` / `Opacity %`: integer 0–100, default 100. Below 100, the front uses black background without edge glow; the selected background/glow settings return at 100. The checkerboard is preview-only.
+- `白PNGも出力` / `Also Export White PNG`: OFF by default. After successful preview-MP4 or full rendering, writes a pure-white RGB PNG matching the actual video dimensions. It is not emitted for failed/cancelled renders and does not overwrite an existing PNG.
+
+Full-frame output increases frame-transfer and encoding work. CRF remains the quality control; file size is not fixed. Semitransparency is represented by two RGB videos, not a native alpha channel in MP4.
 
 ## Post Transform Layer
 
@@ -75,10 +92,12 @@ audio analysis
 dynamic motion shaping
 basic drawing
 Post Transform
+matched opacity adjustment
+optional output-canvas placement
 ffmpeg encoding
 ```
 
-Supported transforms in v1.4.1:
+Supported transforms in v1.5.0:
 
 - Rotation around the canvas center.
 - Vertical trapezoid: negative values narrow the top, positive values narrow the bottom.
@@ -86,7 +105,7 @@ Supported transforms in v1.4.1:
 - Combined trapezoid + rotation.
 - Audio-reactive scaling.
 
-The canvas size is preserved. Out-of-canvas areas are clipped. Newly exposed areas are filled with black for the main video and white for the matte video.
+The original drawing-canvas size is preserved during Post Transform. Out-of-canvas areas are clipped; placing the result on a larger output canvas does not restore those clipped pixels. Newly exposed areas are filled with black for standard main output and white for the matte.
 
 ## Audio-Reactive Scaling
 
@@ -123,6 +142,7 @@ Edge Glow is a black-background-only drawing option for the main video. It sprea
 - Strong: four directions, fixed 50% strength.
 - Matte output is unchanged.
 - Edge Glow is applied before Post Transform, so rotation and trapezoid transforms carry the glow with the spectrum.
+- Below 100% opacity, glow is not applied so the front and matte remain a matched translucent pair.
 
 ## Render Cancellation
 
@@ -140,7 +160,7 @@ In Advanced Custom mode, the internal-analysis choices mirror the visible choice
 
 ## System Presets
 
-v1.4.1 includes these system presets:
+v1.5.0 includes these system presets:
 
 1. `01 Basic White`
 2. `02 Dual White`
@@ -187,11 +207,16 @@ Manual launch after setup:
 
 ## SRT Spectrum Video Composer
 
-`final_composer.py` is bundled as SRT Spectrum Video Composer. Audio Spectrum Overlay Maker can launch it through the `SRT Spectrum Video Composer を開く` button and pass:
+`final_composer.py` is bundled as SRT Spectrum Video Composer v1.1.1 (independently versioned). Audio Spectrum Overlay Maker can launch it through the `SRT Spectrum Video Composer を開く` button and pass:
 
 - source audio path
 - generated main spectrum video path
 - generated matte video path
+- baked-in opacity and the recommended `multiply_add` mode for translucent assets
+
+These values belong to the last successful render, including its source audio. Changing the current UI settings does not change that render's handoff metadata. Before the first successful render, only the selected audio is passed. Failed or cancelled renders do not replace the last successful set.
+
+The schema remains version 1, with an optional `spectrum_asset` object. `opacity_percent` is already applied to the media, not a coefficient to apply again. Below 100%, `recommended_compose_mode` is `multiply_add`; at 100%, the mode is omitted. Translucent compositing requires the matching matte.
 
 Background image, SRT subtitles, final output path, and layout are selected on the composer side.
 
@@ -220,6 +245,7 @@ The source release zip is based on the v1.3-alpha1 package layout and includes:
 - `bin\README.txt`
 
 Generated videos, local virtual environments, user presets, caches, and ffmpeg binaries are not included.
+The standalone SSVC project's `README_SSVC.md` is also excluded. Bundled SSVC instructions are in `USER_MANUAL_SSVC.md`.
 
 ## Privacy
 

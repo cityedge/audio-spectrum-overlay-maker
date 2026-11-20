@@ -10,10 +10,10 @@ from __future__ import annotations
 import math
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 
 from spectrum_types import EncodeSettings, LogFn, MotionSettings, PostTransformSettings, RenderStyle, TransformSettings
 from spectrum_utils import log, unique_path
@@ -23,6 +23,17 @@ from spectrum_transform import slice_spectrum_data, transform_spectrum_data
 from spectrum_encoder import render_video
 from spectrum_peak import compute_peak_hold_values
 from spectrum_cancel import RenderCancelToken, RenderCancelled
+from spectrum_output_canvas import output_dimensions
+from spectrum_opacity import make_matte_style, prepare_opacity_style
+
+
+def export_white_png(video_path: Path, style: RenderStyle) -> Path:
+    """Write a separate opaque-white RGB image without overwriting existing files."""
+    path = unique_path(video_path.with_name(f"{video_path.stem}_white.png"))
+    with Image.new("RGB", output_dimensions(style), (255, 255, 255)) as image:
+        with path.open("xb") as target:
+            image.save(target, format="PNG")
+    return path
 
 
 def _remove_cancelled_output(path: Path) -> bool:
@@ -276,7 +287,9 @@ def render_audio_to_video(
     post_transform: PostTransformSettings | None = None,
     write_matte: bool = False,
     cancel_token: RenderCancelToken | None = None,
+    write_white_png: bool = False,
 ) -> Path:
+    style = prepare_opacity_style(style)
     transform = transform or TransformSettings(display_bars=style.bars)
     if cancel_token is not None:
         cancel_token.raise_if_cancelled()
@@ -336,15 +349,7 @@ def render_audio_to_video(
 
         if write_matte:
             assert matte_path is not None
-            matte_style = replace(
-                style,
-                background_color=(255, 255, 255),
-                bar_color=(0, 0, 0),
-                bar_color2=(0, 0, 0),
-                color_mode="vertical",
-                edge_glow_enabled=False,
-                edge_glow_mode="none",
-            )
+            matte_style = make_matte_style(style)
             log("Writing main and matte outputs in parallel.", log_callback)
             with ThreadPoolExecutor(max_workers=2) as executor:
                 main_future = executor.submit(
@@ -398,6 +403,9 @@ def render_audio_to_video(
             log("Render cancelled. Partial output files were removed.", log_callback)
         raise
 
+    if write_white_png:
+        white_path = export_white_png(output_path, style)
+        log(f"Saved white PNG: {white_path}", log_callback)
     return output_path
 
 def build_default_output_path(input_path: Path, output_dir: Path, style: RenderStyle, preview: bool, start: float = 0.0, duration: float | None = None) -> Path:
@@ -406,6 +414,10 @@ def build_default_output_path(input_path: Path, output_dir: Path, style: RenderS
     base = f"{input_path.stem}_spectrum_{style.width}x{style.height}_{style.bars}bars_bw{bw}_r{style.corner_radius}"
     if bool(getattr(style, "digital_enabled", False)):
         base += f"_digital{int(style.digital_segments)}g{int(style.digital_gap_px)}"
+    if style.output_canvas.enabled:
+        base += f"_canvas{style.output_canvas.width}x{style.output_canvas.height}"
+    if style.opacity_percent != 100:
+        base += f"_opacity{style.opacity_percent}"
     if preview:
         dur = int(round(float(duration or 0)))
         st = int(round(float(start or 0)))

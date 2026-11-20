@@ -25,6 +25,8 @@ import shutil
 import subprocess
 import sys
 import threading
+import math
+from fractions import Fraction
 from dataclasses import dataclass, asdict, field, fields
 from pathlib import Path
 from tkinter import (
@@ -41,7 +43,7 @@ except Exception:
 
 
 APP_NAME = "SRT Spectrum Video Composer"
-APP_VERSION = "0.1.8-stable"
+APP_VERSION = "1.1.1"
 PROJECT_SCHEMA_VERSION = 1
 HANDOFF_SCHEMA_VERSION = 1
 HANDOFF_TYPE = "audio_spectrum_overlay_maker_to_srt_spectrum_video_composer"
@@ -127,6 +129,8 @@ TRANSLATIONS = {
         "language": "言語／Language", "background": "背景画像", "audio": "音源", "srt": "SRT字幕",
         "spectrum_color": "カラースペアナ", "spectrum_mask": "マスク動画", "output_mp4": "出力MP4",
         "icon_image1": "アイコン画像1", "icon_image2": "アイコン画像2",
+        "asset_type": "素材種別", "asset_binary": "二値（従来）", "asset_translucent": "半透明",
+        "asset_opacity": "素材の不透明度: {value}%（適用済み）",
         "select": "選択", "files_note": "作業に最低限必要なのは背景画像と音源だけです。スペアナ動画やSRTは任意です。スペアナ動画のみでマスク動画がない場合は、自動的に黒背景透過で処理します。",
         "reload_srt": "SRT再読み込み", "srt_note": "行を選択すると、その行の中央時刻がプレビュー時刻になります。",
         "start": "開始", "end": "終了", "body": "本文",
@@ -137,7 +141,7 @@ TRANSLATIONS = {
         "title_note": "デフォルトでは音源ファイル名（拡張子なし）をタイトル文字列にします。字幕とは別レイヤーとしてASSに焼き込みます。",
         "geom": "位置とサイズ", "appearance": "表示", "display_transform": "表示・変形", "x_pos": "X位置", "y_pos": "Y位置", "width": "幅", "height": "高さ", "center": "中央",
         "transform": "変形", "flip_h": "左右反転", "flip_v": "上下反転",
-        "compose_mode": "合成方式", "compose_note": "標準はマスク動画方式です。マスク動画がない場合は自動的に黒背景透過へフォールバックします。",
+        "compose_mode": "合成方式", "compose_note": "従来素材はマットなしで黒背景透過。半透明素材には対応マットが必要です。",
         "video_settings": "動画設定", "resolution": "解像度", "fps": "FPS", "quality": "品質", "quality_preset": "画質プリセット",
         "encoder_preset": "x264 preset", "stillimage_tune": "静止画チューニング", "bitrate": "ビットレート", "video_bitrate": "最大ビットレート 任意", "audio_bitrate": "音声ビットレート",
         "bitrate_note": "空欄でCRF中心の品質指定になります。YouTube向け通常用途では標準CRFで十分です。",
@@ -168,6 +172,8 @@ TRANSLATIONS = {
         "language": "Language", "background": "Background image", "audio": "Audio", "srt": "SRT subtitle",
         "spectrum_color": "Color spectrum", "spectrum_mask": "Mask video", "output_mp4": "Output MP4",
         "icon_image1": "Icon image 1", "icon_image2": "Icon image 2",
+        "asset_type": "Asset type", "asset_binary": "Binary (legacy)", "asset_translucent": "Translucent",
+        "asset_opacity": "Asset opacity: {value}% (already applied)",
         "select": "Browse", "files_note": "Only a background image and audio file are required. Spectrum video and SRT are optional. If a spectrum video is set without a mask video, black-background keying is used automatically.",
         "reload_srt": "Reload SRT", "srt_note": "Selecting a line sets the preview time to the middle of that subtitle line.",
         "start": "Start", "end": "End", "body": "Text",
@@ -178,7 +184,7 @@ TRANSLATIONS = {
         "title_note": "By default the audio filename without extension is used as the title. It is burned in as a separate ASS layer.",
         "geom": "Position and size", "appearance": "Appearance", "display_transform": "Display / transform", "x_pos": "X", "y_pos": "Y", "width": "Width", "height": "Height", "center": "Center",
         "transform": "Transform", "flip_h": "Flip horizontal", "flip_v": "Flip vertical",
-        "compose_mode": "Compositing mode", "compose_note": "The standard mode is mask-alpha compositing. If no mask video is set, it automatically falls back to black-background keying.",
+        "compose_mode": "Compositing mode", "compose_note": "Legacy assets use black keying without a matte. Translucent assets require a matte.",
         "video_settings": "Video settings", "resolution": "Resolution", "fps": "FPS", "quality": "Quality", "quality_preset": "Quality preset",
         "encoder_preset": "x264 preset", "stillimage_tune": "Still-image tuning", "bitrate": "Bitrate", "video_bitrate": "Max video bitrate optional", "audio_bitrate": "Audio bitrate",
         "bitrate_note": "Leave max bitrate blank to use CRF-based quality. Standard CRF is usually sufficient for YouTube.",
@@ -205,6 +211,7 @@ TRANSLATIONS = {
 }
 
 TOOLTIPS = {
+    "asset_type": {"ja": "新しい素材の読み込み時に判定しますが、手動で変更できます。半透明は乗算＋加算、追加透明度0に固定します。二値に戻すと従来の設定を復元します。", "en": "Detected on new input; you can override it. Translucent locks multiply + add and zero additional transparency. Binary restores the legacy settings."},
     "icon_images": {"ja": "任意の画像です。元サイズのまま右下に下揃えで配置します。2枚なら1が左、2が右。右・下・画像間の余白は2pxです。透過PNGに対応し、スペアナ・タイトル・字幕より下に表示します。", "en": "Optional images at their original pixel size, bottom-aligned at the bottom right. Image 1 goes left of image 2, with 2px right, bottom and inter-image margins. PNG transparency is preserved. Icons appear below the spectrum, title and subtitles."},
     "language": {"ja": "画面表示とヒントの言語を切り替えます。", "en": "Switches the UI and tooltip language."},
     "background": {"ja": "動画の背景に使う静止画像です。等倍モードではリサイズせず、その画像サイズを出力解像度にします。", "en": "Still image used as the video background. In background-size mode, it is not resized and its size becomes the output resolution."},
@@ -226,7 +233,7 @@ TOOLTIPS = {
     "spec_pos": {"ja": "スペアナの左上位置です。出力解像度上のピクセル座標です。", "en": "Top-left position of the spectrum in output pixels."},
     "spec_size": {"ja": "スペアナの表示サイズです。", "en": "Displayed size of the spectrum layer."},
     "flip": {"ja": "カラースペアナとマスクに同じ反転を適用します。", "en": "Applies the same flip to color spectrum and mask."},
-    "compose_mode": {"ja": "半透明素材には「マット乗算＋フロント加算」を選び、対応する白地のマットと黒背景のフロントを指定します。マットがない場合は黒背景透過になります。", "en": "For translucent assets, choose matte multiply + front add with a matching white-background matte and black-background front. Without a matte, black-background keying is used."},
+    "compose_mode": {"ja": "素材種別が半透明の場合は乗算＋加算に固定し、対応マットを必須とします。二値（従来）では合成方式を選択でき、マットなしの場合は黒背景透過になります。", "en": "Translucent assets require multiply + add and a matching matte. Binary (legacy) allows mode selection and falls back to black keying without a matte."},
     "resolution": {"ja": "最終動画の解像度です。「背景画像と同じサイズ」では背景画像を等倍で使います。", "en": "Final video resolution. Background-size mode uses the background image at native size."},
     "stillimage_tune": {"ja": "x264のstillimageチューニングを使います。静止画中心の動画向けですが、スペアナが大きい場合は容量が増えることがあります。", "en": "Uses x264 stillimage tuning. Useful for still-image videos, but large spectrum overlays may increase file size."},
     "fps": {"ja": "最終動画のフレームレートです。", "en": "Frame rate of the final video."},
@@ -583,14 +590,83 @@ def has_existing_file(path: str) -> bool:
     return bool(path and Path(path).exists())
 
 
+def detect_spectrum_asset(path: str, metadata=None) -> tuple[int | None, list[str]]:
+    """Return baked-in opacity, never an additional transparency coefficient."""
+    number = r"\d+(?:\.\d+)?"
+    match = re.fullmatch(
+        rf".+_spectrum_\d+x\d+_\d+bars_bw{number}_r{number}"
+        rf"(?:_digital\d+g{number})?(?:_canvas\d+x\d+)?"
+        rf"(?:_opacity(?P<opacity>\d+))?(?:_preview_s{number}_d{number})?(?: \(\d+\))?",
+        Path(path).stem, re.IGNORECASE,
+    ) if Path(path).suffix.lower() == ".mp4" else None
+    named = None
+    if match:
+        value = match.group("opacity")
+        named = 100 if value is None else int(value)
+        if value is not None and not 0 <= named <= 99:
+            named = None
+    warnings = []
+    if metadata is not None:
+        value = metadata.get("opacity_percent") if isinstance(metadata, dict) else None
+        if type(value) is int and 0 <= value <= 100:
+            recommended = metadata.get("recommended_compose_mode")
+            if recommended is not None and (value == 100 or recommended != "multiply_add"):
+                warnings.append("素材メタデータの推奨方式が矛盾または未対応です / Conflicting or unsupported recommended mode")
+            if named is not None and value != named:
+                warnings.append("素材情報とファイル名が不一致です。JSONを優先します / Metadata overrides filename")
+            return value, warnings
+        warnings.append("素材の不透明度情報が無効です / Invalid asset opacity metadata")
+    return named, warnings
+
+
+def validate_translucent_pair(settings: AppSettings) -> None:
+    if settings.spectrum.asset_type != "translucent" or not settings.files.spectrum_color:
+        return
+    if not has_existing_file(settings.files.spectrum_mask):
+        raise ValueError("半透明素材には対応マットが必要です / Translucent assets require a matching matte")
+    videos = []
+    for path in (settings.files.spectrum_color, settings.files.spectrum_mask):
+        result = subprocess.run(
+            [find_tool("ffprobe"), "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height,avg_frame_rate,duration:format=duration",
+             "-of", "json", path], capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=30, **no_window_subprocess_kwargs(),
+        )
+        try:
+            if result.returncode:
+                raise ValueError(result.stderr)
+            data = json.loads(result.stdout)
+            video = data["streams"][0]
+            fps = float(Fraction(video["avg_frame_rate"]))
+            duration_value = video.get("duration")
+            if duration_value in (None, "N/A"):
+                duration_value = data.get("format", {}).get("duration")
+            duration = float(duration_value)
+            width, height = int(video["width"]), int(video["height"])
+            if not all(math.isfinite(v) and v > 0 for v in (fps, duration, width, height)):
+                raise ValueError("Invalid video properties")
+            videos.append((width, height, fps, duration))
+        except (ValueError, KeyError, IndexError, TypeError, ZeroDivisionError) as exc:
+            raise ValueError(f"半透明素材の動画情報を確認できません / Cannot inspect translucent video: {path}") from exc
+    front, matte = videos
+    if (front[:2] != matte[:2] or abs(front[2] - matte[2]) > 0.001
+            or abs(front[3] - matte[3]) > 1 / min(front[2], matte[2]) + 0.01):
+        raise ValueError("フロントとマットの寸法・fps・長さが一致しません / Front and matte dimensions, fps or duration differ")
+
+
 def effective_compose_mode(settings: AppSettings) -> str | None:
     """Return actual spectrum compositing mode.
 
     - No color spectrum video: no spectrum layer.
-    - Mask modes without an existing mask: fall back to black colorkey mode.
+    - Legacy mask modes without a mask: fall back to black colorkey mode.
+    - Translucent assets require a matte and always use multiply + add.
     """
     if not has_existing_file(settings.files.spectrum_color):
         return None
+    if settings.spectrum.asset_type == "translucent":
+        if not has_existing_file(settings.files.spectrum_mask):
+            raise ValueError("半透明素材には対応マットが必要です / Translucent assets require a matching matte")
+        return "multiply_add"
     mode = settings.spectrum.compose_mode
     if mode in MASK_COMPOSE_MODES and not has_existing_file(settings.files.spectrum_mask):
         return "black_colorkey"
@@ -842,6 +918,10 @@ class SpectrumSettings:
     mask_binarize: bool = False
     mask_threshold: int = 128
     alpha_strength: float = 1.0
+    asset_type: str = "binary"
+    asset_opacity_percent: int | None = None
+    binary_compose_mode: str = "mask_alpha"
+    binary_opacity: int = 0
 
 
 @dataclass
@@ -1130,6 +1210,8 @@ def optional_flip_chain(label_in: str, spec: SpectrumSettings, label_out: str) -
 
 
 def spectrum_opacity_factor(spec: SpectrumSettings) -> float:
+    if spec.asset_type == "translucent":
+        return 1.0
     opacity = min(100, max(0, int(getattr(spec, "opacity", 0))))
     return max(0.0, min(1.0, 1.0 - opacity / 100.0))
 
@@ -1432,6 +1514,7 @@ def build_filter_complex(settings: AppSettings, ass_path: str, duration_sec: flo
     )
 
 def build_ffmpeg_command(settings: AppSettings, ass_path: str) -> list[str]:
+    validate_translucent_pair(settings)
     ffmpeg = find_tool("ffmpeg")
     files = settings.files
     out = settings.output
@@ -1507,6 +1590,7 @@ def build_ffmpeg_command(settings: AppSettings, ass_path: str) -> list[str]:
 
 
 def build_preview_png_command(settings: AppSettings, ass_path: str, preview_path: str, preview_sec: float) -> list[str]:
+    validate_translucent_pair(settings)
     ffmpeg = find_tool("ffmpeg")
     files = settings.files
     mode = effective_compose_mode(settings)
@@ -1562,6 +1646,7 @@ def build_preview_png_command(settings: AppSettings, ass_path: str, preview_path
 
 
 def build_preview_video_command(settings: AppSettings, ass_path: str, preview_path: str, start_sec: float, duration_sec: float) -> list[str]:
+    validate_translucent_pair(settings)
     ffmpeg = find_tool("ffmpeg")
     files = settings.files
     mode = effective_compose_mode(settings)
@@ -1782,6 +1867,9 @@ class App(Tk):
             "spec_w": IntVar(value=600),
             "spec_h": IntVar(value=180),
             "spec_opacity": IntVar(value=0),
+            "asset_type": StringVar(value="binary"),
+            "binary_compose_mode": StringVar(value="mask_alpha"),
+            "binary_opacity": IntVar(value=0),
             "flip_h": BooleanVar(value=False),
             "flip_v": BooleanVar(value=False),
             "compose_mode": StringVar(value="mask_alpha"),
@@ -1982,6 +2070,9 @@ class App(Tk):
         if tip_key == "icon_images":
             ent.bind("<FocusOut>", lambda _event: self._draw_preview())
             ent.bind("<Return>", lambda _event: self._draw_preview())
+        if tip_key == "spectrum_color":
+            ent.bind("<FocusOut>", lambda _event: self._on_spectrum_file_changed())
+            ent.bind("<Return>", lambda _event: self._on_spectrum_file_changed())
         btn = Button(parent, text=self.t("select"), command=browse_cmd)
         btn.grid(row=row, column=2, padx=4, pady=4)
         if tip_key:
@@ -2627,6 +2718,7 @@ class App(Tk):
         self.vars["spec_opacity"].set(max(0, min(100, int(spec.get("opacity", self.vars["spec_opacity"].get())))))
         self.vars["flip_h"].set(bool(spec.get("flip_horizontal", self.vars["flip_h"].get())))
         self.vars["flip_v"].set(bool(spec.get("flip_vertical", self.vars["flip_v"].get())))
+        self._update_mask_state()
         self._update_dynamic_scale_ranges()
         self._update_color_buttons()
         self._draw_preview()
@@ -3132,6 +3224,17 @@ class App(Tk):
         f = Frame(self.notebook)
         self.notebook.add(f, text=self.t("tab_spectrum"))
 
+        asset = Frame(f)
+        asset.pack(fill="x", padx=8, pady=4)
+        Label(asset, text=self.t("asset_type")).pack(side="left")
+        for value, label in (("binary", "asset_binary"), ("translucent", "asset_translucent")):
+            button = ttk.Radiobutton(asset, text=self.t(label), value=value,
+                                     variable=self.vars["asset_type"], command=self._on_asset_type_changed)
+            button.pack(side="left", padx=6)
+            self.add_tip(button, "asset_type")
+        self.asset_status_label = Label(f, anchor="w")
+        self.asset_status_label.pack(fill="x", padx=8)
+
         geom = ttk.LabelFrame(f, text=self.t("geom"))
         geom.pack(fill="x", padx=8, pady=8)
         geom.columnconfigure(1, weight=1)
@@ -3160,6 +3263,7 @@ class App(Tk):
         self.compose_mode_label_var = StringVar(value=mode_labels.get(self.vars["compose_mode"].get(), mode_labels["mask_alpha"]))
         mode = ttk.Combobox(comp, textvariable=self.compose_mode_label_var, values=labels, state="readonly", width=44)
         mode.grid(row=0, column=0, sticky="ew", padx=6, pady=5)
+        self.compose_mode_combo = mode
         comp.columnconfigure(0, weight=1)
         mode.bind("<<ComboboxSelected>>", self._on_mode_label_changed)
         self.add_tip(mode, "compose_mode")
@@ -3173,6 +3277,7 @@ class App(Tk):
         mask_bin = ttk.Checkbutton(mask, text=self.t("mask_binarize"), variable=self.vars["mask_binarize"], command=self._draw_preview)
         mask_bin.grid(row=2, column=0, columnspan=3, sticky="w", padx=6, pady=5)
         self.add_tip(mask_bin, "mask_proc")
+        self.mask_binarize_check = mask_bin
         self._build_scale_row(mask, 3, self.t("mask_threshold"), "mask_threshold", 0, 255, 1, tip_key="mask_proc")
 
         keying = ttk.LabelFrame(f, text=self.t("black_key"))
@@ -3181,6 +3286,7 @@ class App(Tk):
         Label(keying, text=self.t("black_key_note"), justify="left", foreground="#555555", wraplength=720).grid(row=0, column=0, columnspan=3, sticky="w", padx=6, pady=(6, 2))
         self._build_scale_row(keying, 1, self.t("black_similarity"), "black_similarity", 0.0, 0.3, 0.005, spin_width=8, tip_key="black_key")
         self._build_scale_row(keying, 2, self.t("black_blend"), "black_blend", 0.0, 0.3, 0.005, spin_width=8, tip_key="black_key")
+        self._update_mask_state()
 
     def _build_output_tab(self) -> None:
         f = Frame(self.notebook)
@@ -3358,7 +3464,7 @@ class App(Tk):
                 self._auto_fill_output_from_audio()
                 self._auto_fill_title_from_audio()
             if key == "spectrum_color":
-                self._auto_load_mask_from_spectrum()
+                self._on_spectrum_file_changed(force=True)
                 self._draw_preview()
             if key == "srt":
                 self._load_srt_items(show_message=False)
@@ -3463,13 +3569,18 @@ class App(Tk):
             "spectrum_color": ("spectrum_video", "color_spectrum", "color_spectrum_path", "spectrum_color_path"),
             "spectrum_mask": ("mask_video", "mask_path", "spectrum_mask_path"),
         }
+        incoming_color = read_file_value("spectrum_color", *file_map["spectrum_color"])
         for key, aliases in file_map.items():
+            if key == "spectrum_mask" and incoming_color and "spectrum_color" not in applied:
+                continue
             value = read_file_value(key, *aliases)
             if not value:
                 continue
-            if not Path(value).exists():
+            if not Path(value).is_file():
                 skipped.append(key)
                 continue
+            if key == "spectrum_color":
+                self.vars["spectrum_mask"].set("")
             self.vars[key].set(value)
             applied.append(key)
 
@@ -3512,8 +3623,10 @@ class App(Tk):
             self._auto_fill_title_from_audio(force=True)
             if self.vars["title_text"].get().strip():
                 applied.append("title_auto")
-        if self.vars["spectrum_color"].get().strip() and not self.vars["spectrum_mask"].get().strip():
-            self._auto_load_mask_from_spectrum()
+        if "spectrum_color" in applied:
+            if not self.vars["spectrum_mask"].get().strip():
+                self._auto_load_mask_from_spectrum()
+            self._detect_new_spectrum_asset(data.get("spectrum_asset"))
         if self.vars["background"].get().strip() and self.vars["resolution_preset"].get() == BACKGROUND_SIZE_PRESET:
             self._update_resolution_from_preset()
 
@@ -3570,7 +3683,68 @@ class App(Tk):
         self._update_mask_state()
 
     def _update_mask_state(self) -> None:
-        pass
+        translucent = self.vars["asset_type"].get() == "translucent"
+        if translucent:
+            self.vars["spec_opacity"].set(0)
+            self.vars["compose_mode"].set("multiply_add")
+            self.compose_mode_label_var.set(self.mode_key_to_label["multiply_add"])
+        if hasattr(self, "compose_mode_combo"):
+            self.compose_mode_combo.configure(state="disabled" if translucent else "readonly")
+        for key in ("spec_opacity", "alpha_strength", "mask_threshold", "black_similarity", "black_blend"):
+            for widget in self.scale_controls.get(key, ()):
+                widget.configure(state="disabled" if translucent else "normal")
+        if hasattr(self, "mask_binarize_check"):
+            self.mask_binarize_check.configure(state="disabled" if translucent else "normal")
+        value = getattr(self, "asset_opacity_percent", None)
+        if hasattr(self, "asset_status_label"):
+            self.asset_status_label.configure(text=self.t("asset_opacity").format(value=value) if value is not None else "")
+
+    def _on_asset_type_changed(self) -> None:
+        self._set_asset_type(self.vars["asset_type"].get())
+        if hasattr(self, "preview"):
+            self._draw_preview()
+
+    def _set_asset_type(self, value: str) -> None:
+        previous = getattr(self, "_active_asset_type", "binary")
+        if value != previous:
+            if value == "translucent":
+                self.vars["binary_compose_mode"].set(self.vars["compose_mode"].get())
+                self.vars["binary_opacity"].set(self.vars["spec_opacity"].get())
+            else:
+                mode = self.vars["binary_compose_mode"].get()
+                self.vars["compose_mode"].set(mode)
+                self.compose_mode_label_var.set(self.mode_key_to_label.get(mode, self.mode_key_to_label["mask_alpha"]))
+                self.vars["spec_opacity"].set(self.vars["binary_opacity"].get())
+        self.vars["asset_type"].set(value)
+        self._active_asset_type = value
+        self._update_mask_state()
+
+    def _detect_new_spectrum_asset(self, metadata=None) -> None:
+        path = self.vars["spectrum_color"].get().strip()
+        self._spectrum_source_path = path
+        opacity, warnings = detect_spectrum_asset(path, metadata)
+        self.asset_opacity_percent = opacity
+        self._set_asset_type("translucent" if opacity is not None and opacity < 100 else "binary")
+        for warning in warnings:
+            self.append_log(warning + "\n")
+        if opacity is not None:
+            self.append_log(self.t("asset_opacity").format(value=opacity) + "\n")
+        if self.vars["asset_type"].get() == "translucent" and not has_existing_file(self.vars["spectrum_mask"].get()):
+            self.append_log("対応マットを指定してください / Select a matching matte before rendering.\n")
+
+    def _on_spectrum_file_changed(self, force: bool = False) -> None:
+        path = self.vars["spectrum_color"].get().strip()
+        if not force and path == getattr(self, "_spectrum_source_path", ""):
+            return
+        self.vars["spectrum_mask"].set("")
+        self._spectrum_source_path = path
+        if has_existing_file(path):
+            self._auto_load_mask_from_spectrum()
+            self._detect_new_spectrum_asset()
+        elif not path:
+            self.asset_opacity_percent = None
+            self._set_asset_type("binary")
+        self._schedule_preview_redraw()
 
     def _update_resolution_from_preset(self) -> None:
         preset = self.vars["resolution_preset"].get()
@@ -3612,6 +3786,7 @@ class App(Tk):
         mode_label = getattr(self, "compose_mode_label_var", None)
         if mode_label is not None:
             self.vars["compose_mode"].set(self.mode_label_to_key.get(mode_label.get(), "mask_alpha"))
+        self._update_mask_state()
         self.vars["background_mode"].set("slideshow" if bool(self.vars["slideshow_enabled"].get()) else "single")
         self._sync_slideshow_scenes_from_rows()
         self._auto_fill_output_from_audio()
@@ -3689,6 +3864,10 @@ class App(Tk):
                 mask_binarize=bool(self.vars["mask_binarize"].get()),
                 mask_threshold=int(self.vars["mask_threshold"].get()),
                 alpha_strength=float(self.vars["alpha_strength"].get()),
+                asset_type=self.vars["asset_type"].get(),
+                asset_opacity_percent=getattr(self, "asset_opacity_percent", None),
+                binary_compose_mode=self.vars["binary_compose_mode"].get(),
+                binary_opacity=int(self.vars["binary_opacity"].get()),
             ),
             output=OutputSettings(
                 width=int(self.vars["out_w"].get()),
@@ -3708,6 +3887,7 @@ class App(Tk):
         self.vars["audio"].set(settings.files.audio)
         self.vars["srt"].set(settings.files.srt)
         self.vars["spectrum_color"].set(settings.files.spectrum_color)
+        self._spectrum_source_path = settings.files.spectrum_color.strip()
         self.vars["spectrum_mask"].set(settings.files.spectrum_mask)
         self.vars["icon_image1"].set(settings.files.icon_image1)
         self.vars["icon_image2"].set(settings.files.icon_image2)
@@ -3778,6 +3958,12 @@ class App(Tk):
         self.vars["mask_binarize"].set(sp.mask_binarize)
         self.vars["mask_threshold"].set(sp.mask_threshold)
         self.vars["alpha_strength"].set(sp.alpha_strength)
+        self.vars["asset_type"].set(sp.asset_type)
+        self._active_asset_type = sp.asset_type
+        self.asset_opacity_percent = sp.asset_opacity_percent
+        self.vars["binary_compose_mode"].set(sp.binary_compose_mode)
+        self.vars["binary_opacity"].set(sp.binary_opacity)
+        self._update_mask_state()
         self.vars["out_w"].set(settings.output.width)
         self.vars["out_h"].set(settings.output.height)
         self.vars["fps"].set(settings.output.fps)

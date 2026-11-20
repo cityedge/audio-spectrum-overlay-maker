@@ -1,38 +1,52 @@
-# Audio Spectrum Overlay Maker v1.4.1 Release Notes
+# Audio Spectrum Overlay Maker v1.5.0 Release Notes
 
-v1.4.1 はデジタル描画を大幅に高速化する更新です。小片の形状・色・角丸を再利用することで、多数のバー・分割数を使う設定の描画負荷を軽減しました。設定変更は不要で、プレビューとメイン／マット出力に自動適用されます。
+v1.5.0は、全画面キャンバスへの配置と、フロント／マットの半透明出力に対応したリリースです。同梱のSSVCをv1.1.1へ更新し、生成済み素材の不透明度を明示して受け渡します。
 
-720×280・96バー・64分割、30fpsの2秒動画で、メイン／マット同時MP4出力は **19.70秒から2.41秒** になりました。両側デジタル、ピーク片、色スクロール、回転、縦横台形、音量連動拡大、メインの標準グローを併用した測定です。音声解析は含みません。結果はPC性能・解像度・設定によって変わります。
+## 新機能
 
-従来描画との画素比較を行い、生成MP4をデコードした結果も、メイン／マットそれぞれ全60フレームが完全一致しました。詳細は `TEST_REPORT.md` を参照してください。
+### 全画面キャンバス出力
 
-## Highlights
+- スペアナの描画サイズとは別に、最終出力キャンバスのサイズを設定できます。
+- 9方向の配置と横・縦オフセットに対応。初期値はOFF、1920×1080、中央下、オフセット0です。
+- Post Transform後のスペアナを拡大縮小せずに配置します。余白はメインが黒、マットが白です。
+- PowerDirectorで小さい動画素材の矩形境界に線が出る場合は、最終映像と同サイズで出力し、編集ソフトでも全画面・同一配置で使用してください。再度縮小・移動すると再発する可能性があります。
 
-- Accelerated digital/LED rendering with cached segment shapes and colors, preserving peak modes, gradients, scrolling, glow, and Post Transform combinations.
-- High-frequency boost amount and curve now affect the still preview.
-- Existing preset format and Composer handoff interface are unchanged.
+### 不透明度と白PNG
 
-## Retained v1.4.0 Features
+- 「見た目」タブ下部に、整数0～100%の不透明度を追加。初期値100%は従来出力を維持します。
+- 100%未満はフロントとマットの濃度を対応補正し、GUIでは市松背景で確認できます。市松背景は動画に入りません。
+- 半透明時は黒背景・グローなしで出力します。設定自体は保持し、100%に戻すと復帰します。
+- 「白PNGも出力」を追加。正常生成した動画と同サイズの完全白RGB画像を保存します。初期値OFFで、キャンセル・失敗時は出力せず、既存PNGも上書きしません。
 
-- Peak Hold is a display mode dropdown: Off, Peak Markers, Peaks Only, or Peaks as Bars.
-- Visible bar counts now reach 128, with 80, 96, and 112 available between 64 and 128.
-- Advanced Custom internal-analysis choices now mirror visible bar choices, so 80/96/112/128 can use one analysis band per visible bar.
-- Preview-video and full-video rendering can be cancelled from the main action area.
-- Default cancellation removes incomplete main and matte MP4 files.
-- Advanced `Keep Partial Videos on Cancel` finalizes and retains playable partial MP4s for visual inspection.
+### SSVC連携
 
-## Partial Video Compatibility
+- 同梱SSVCは独立バージョンのv1.1.1です。半透明素材の判定、乗算＋加算、対応マットの必須化に対応しています。
+- 連携JSONはschema_version 1を維持し、任意の `spectrum_asset` に生成時の不透明度と推奨合成方式を記録します。
+- 直近の正常生成に対応する動画・マット・元音源・不透明度をまとめて保持します。生成後の設定変更や失敗・キャンセルで、別の素材の情報が混ざりません。
+- SSVCの「半透明」素材モードでは追加透明度を0に固定し、素材へ不透明度を二重適用しません。従来素材の操作は維持します。
 
-When partial-video retention is enabled with pair output, main and matte encoders stop independently. Their durations can differ, so retained files are not a compositing-ready main/matte pair. Full renders that complete normally retain the usual frame-alignment guarantee.
+## 合成方法と互換性
 
-## Existing v1.3.x Features
+半透明ペアは、背景にマットを乗算し、その結果にフロントを加算します。
 
-v1.4.1 continues to include the Post Transform layer, rotation, vertical/horizontal trapezoid transforms, audio-reactive scaling, edge glow, high-frequency boost, scrolling, digital bars, parallel main/matte output, and SRT Spectrum Video Composer handoff.
+```text
+結果 = F + B * M
+F: 不透明度適用済みのフロント
+B: 背景
+M: 白ほど背景を残すマット
+```
 
-## Packaging Notes
+RGBを0～1として扱います。フロントに不透明度を再度掛けたり、マットを二値化したりしないでください。比較（暗）＋比較（明）では半透明を再現できません。加算のないPowerDirectorでは、全画面の白を2枚使ったDifferenceによる代用手順をユーザーガイドに記載しています。
 
-- Source archive: `audio_spectrum_overlay_maker_v1_4_1.zip`.
+100%では従来の背景色・グロー・比較合成を維持します。旧プリセットも、全画面キャンバスOFF、不透明度100%、白PNG出力OFFとして読み込めます。MP4自体にアルファチャンネルを追加するものではありません。
 
-- `ffmpeg.exe` and `ffprobe.exe` are not included in the source release zip; only `bin\README.txt` is included.
-- `final_composer.py` and `USER_MANUAL_SSVC.md` are included without changing the handoff interface.
-- PyInstaller EXE builds are produced separately from the source release package.
+v1.4.1の高速デジタル描画、128本までのバー、ピーク表示各モード、スクロール、Post Transform、音量連動拡大、生成キャンセルも引き続き利用できます。途中保存したメイン／マットは長さが異なる場合があり、合成用の同期ペアではありません。
+
+## 配布内容
+
+- ソースZIP: `audio_spectrum_overlay_maker_v1_5_0.zip`
+- チェックサム: `audio_spectrum_overlay_maker_v1_5_0.zip.sha256`
+- 前回の配布構成に `spectrum_opacity.py` と `spectrum_output_canvas.py` を追加。
+- 更新済みの `final_composer.py` と `USER_MANUAL_SSVC.md` を同梱。SSVC単体プロジェクト用の `README_SSVC.md` は含めません。
+- FFmpeg・FFprobeの実行ファイル、EXE、仮想環境、ユーザープリセット、生成動画は含めません。`bin/README.txt` の案内に従って外部ツールを用意してください。
+- PyInstallerによるEXE化は別途行います。検証内容と残る制限は `TEST_REPORT.md`、操作方法は `USER_GUIDE.md` を参照してください。

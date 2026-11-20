@@ -1,4 +1,4 @@
-# Audio Spectrum Overlay Maker v1.4.1 Development Notes
+# Audio Spectrum Overlay Maker v1.5.0 Development Notes
 
 ## Architecture
 
@@ -17,6 +17,8 @@ spectrum_primitives.py  primitive rendering
 spectrum_digital.py     cached digital-bar rasterization
 spectrum_draw.py        drawing facade
 spectrum_post_transform.py post-render frame coordinate mapping
+spectrum_opacity.py     matched opacity and checkerboard preview
+spectrum_output_canvas.py output canvas placement and clipping
 spectrum_cancel.py      cooperative render cancellation
 spectrum_encoder.py     ffmpeg rawvideo encoder
 spectrum_workflow.py    preview/full render workflows
@@ -40,6 +42,8 @@ audio decode
 -> frame drawing
 -> optional edge glow
 -> Post Transform
+-> matched front/matte opacity
+-> optional output canvas placement
 -> ffmpeg encoding
 ```
 
@@ -89,9 +93,27 @@ bar_color2       = black
 color_mode       = vertical
 ```
 
-The main video keeps the user's normal `RenderStyle`. Pair-output ON/OFF does not change the main output.
+Pair-output ON/OFF does not change the main output. At opacity 100 the user's normal `RenderStyle` is preserved. Below 100, `prepare_opacity_style()` forces black front background and disables glow; the matte uses white background and no glow.
 
 When pair output is enabled, main and matte `render_video()` calls are submitted to a two-worker `ThreadPoolExecutor`. Both receive the same values and transform settings.
+
+## Opacity and Output Canvas
+
+`spectrum_opacity.py` applies an 8bit LUT after Post Transform. For opacity percent `p`, front pixels become `floor(F*p/100)`, and matte pixels become `255-floor((255-M)*p/100)`. The 100% path returns the input frame unchanged. Composite decoded RGB as `F + B*M/255`; do not multiply the front by alpha again.
+
+The matte role is explicit in `RenderStyle.is_matte`; `make_matte_style()` derives it from the same source style. The checkerboard exists only in GUI previews. Motion preview stores source-sized front frames and single-channel mattes, not full output-canvas pairs.
+
+`OutputCanvasSettings` is separate from the original drawing dimensions. Placement follows opacity, uses nine anchors and signed integer offsets, and never rescales the source. Right/bottom anchors reverse the respective positive offset direction. Front padding is black and matte padding white. Clipped Post Transform pixels cannot be recovered by later placement.
+
+`export_white_png()` runs only after successful video generation. Its RGB image uses `output_dimensions(style)`, contains only 255, and is written under a non-overwriting filename. It is auxiliary material for external Difference compositing, not an alpha image.
+
+## SSVC Handoff
+
+`RenderedSpectrum` is an immutable snapshot of the last successful render's source audio, actual main/matte paths and baked-in opacity. Publish the snapshot only after successful workflow completion. Cancelled/failed renders do not replace it; current UI values must not be used to describe an older video.
+
+`create_composer_handoff()` keeps schema version 1 and adds optional `spectrum_asset.opacity_percent` when the front exists and render metadata is known. Below 100 it also sends `recommended_compose_mode: multiply_add`; at 100 no mode is recommended. Old three-argument calls still produce the original payload. Before any successful render, only the selected audio is passed.
+
+Bundled SSVC v1.1.1 recognizes metadata before filename hints, requires a matte for translucent assets, and locks that asset mode to Multiply + Add without additional transparency. SSVC remains a separate application and is imported only in the composer child process. `README_SSVC.md` from the standalone SSVC project is not distributed here.
 
 ## Render Cancellation Design
 
@@ -148,7 +170,7 @@ scale = 100 + (target_scale - 100) * energy
 
 ## Presets
 
-System presets are defined in `preset_manager.py`. v1.4.1 ships 12 system presets. User presets live in `presets_user.json`, which is ignored by Git and is not part of the release zip.
+System presets are defined in `preset_manager.py`. v1.5.0 ships 12 system presets. User presets live in `presets_user.json`, which is ignored by Git and is not part of the release zip. Missing new keys retain legacy behavior: opacity 100%, canvas disabled, and white PNG disabled.
 
 ## ffmpeg / ffprobe Lookup
 

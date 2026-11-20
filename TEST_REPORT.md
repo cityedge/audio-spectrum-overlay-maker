@@ -1,4 +1,48 @@
-# v1.4.1 Test Report
+# v1.5.0 Test Report
+
+## v1.5.0 リリース検証（2026-11-18）
+
+- プロジェクト内の `.venv\Scripts\python.exe`（Python 3.10.6）を使用。
+- `tests/test_composer_handoff.py`：10テスト成功。実スレッドでのMP4生成、連番、設定変更、失敗・キャンセル、SSVC v1.1.1へのJSON受け渡しを含む。
+- `tests/test_opacity_export.py`：7テスト成功。不透明度の数値検証、実MP4ペア、白PNG、キャンセル・失敗時の抑止を含む。
+- `tests/test_output_canvas.py`：5テスト成功。9配置・オフセット・クリップ・無効値と、1920×1080のプレビュー／全体生成ペアを検証。
+- `tests/test_digital_renderer.py`：4テスト成功。既存の高速描画と互換経路の画素一致を確認。
+- `tests/test_opacity_ui.py` と `tests/test_output_canvas_ui.py`：ともに成功。整数スライダー、日英表示、プリセット、プレビュー、入力検証を確認。
+- 合計26テスト＋2種類のTk UIテストが成功。今回の実行ではPyInstallerビルドやPowerDirectorの操作は行っていない。
+- 配布ZIPは `output/audio_spectrum_overlay_maker_v1_5_0.zip`、37ファイル。v1.4.1の35ファイルに `spectrum_opacity.py` と `spectrum_output_canvas.py` を追加。
+- アーカイブのCRC、ワークスペースとの全ファイル一致、Python構文、UTF-8文書、展開先からの独立import・GUIタイトル・初期値を検証。メーカーv1.5.0、SSVC v1.1.1を確認。
+- `.venv`、生成動画、ユーザープリセット、テスト、作業フォルダ、FFmpeg/FFprobe実行ファイル、EXE、README_SSVC.mdは同梱しない。SHA-256ファイルを別途作成。
+
+再実行はプロジェクトルートで `where.exe python` と `.\.venv\Scripts\python.exe --version` を確認したうえで、上記各テストを `.\.venv\Scripts\python.exe -B tests/<ファイル名>` で実行する。
+
+## SSVC半透明連携の開発版検証（2026-11-18）
+
+- `tests/test_composer_handoff.py`：10テスト成功。schema_version 1の互換性、任意の `spectrum_asset`、不透明度0／1／50／99／100%、不正値拒否、未生成・ファイル欠落時の動作を検証。
+- 正常生成した動画・マット・元音源・不透明度を一組で保持。生成中や生成後に設定を変更しても混在せず、失敗・キャンセル（途中動画を残す場合も含む）で直前の成功結果が置き換わらないことを確認。
+- 実際のTk描画スレッドで0.5秒のメイン／マットMP4を生成。同名ファイルを保持したまま連番を付け、その実際の出力パスを連携JSONに記録することを確認。
+- 同梱SSVC v1.1.1の非表示Tk画面に実際の生成JSONを渡し、ファイル名が任意でも0／50／99%は半透明・乗算＋加算・追加透明度0、100%は従来素材として受信することを確認。
+- 通常のメーカー起動時にはSSVCをimportしないことを別Pythonプロセスで検証。SSVC起動ボタンのテストでは子プロセス起動をモックし、コマンドとJSONを確認。EXE版の実起動は未検証。
+- 既存の `tests/test_opacity_export.py`（7テスト）と `tests/test_opacity_ui.py` も成功。
+- 新規テストの生成物は `output/composer_handoff_checks/`。ユーザー更新済みのSSVC本体とマニュアルは変更していない。公開ZIP・EXEは今回更新していない。
+
+## 不透明度・白PNGの開発版検証（2026-11-17）
+
+- `tests/test_opacity_export.py`：7テスト成功。全256階調×不透明度0～100%、100%パススルー、0%の黒／白、半透明時の背景・グロー処理、通常／デジタル＋変形後のDifference合成式、市松プレビューを検証。
+- 実際のプレビュー／全体生成、単独／ペア出力、不透明度0／50／100%を確認。MP4のフレーム数・寸法・画素値を検証。50%素材の境界にはH.264圧縮によるオーバーシュートがあり、エンコード後の画素検証はその誤差を許容。
+- 白PNGはRGB形式・全画素255。通常サイズ768×120と全画面1920×1080、ON/OFF、同名ファイルの保持、キャンセル／失敗時に生成されないことを検証。
+- `tests/test_opacity_ui.py`：初期値、プリセット保存、日英ラベル、市松プレビュー、0%時の動きプレビュー、グロー設定の復帰、小数入力拒否を検証。
+- 既存のデジタル描画4テスト、キャンバス5テスト、キャンバスUI検証も成功。
+- 実ウィンドウの画面確認はユーザーのEsc操作で停止。上記UI検証はTkの自動テストによるもの。PowerDirector上での新しい半透明素材の最終合成確認は未実施。
+- 生成物は `output/opacity_checks/`。公開パッケージとEXEは今回更新していない。
+
+## 全画面キャンバス出力の開発版検証（2026-11-17）
+
+- `tests/test_output_canvas.py`：9方向の配置、正負のオフセット、矩形クリップ、完全に領域外の配置、OFF時の同一画像返却、不正サイズ、Post Transform後の配置、メイン黒／マット白の余白を検証。
+- 合成音源から768×120の96本デジタルスペアナを1920×1080へ配置し、プレビュー経路と全体生成経路で実際にメイン／マットを並列MP4出力。解像度、30fps、両動画のフレーム数、デコード後の余白色、配置領域内の描画を確認。
+- `tests/test_output_canvas_ui.py`：初期値、日英9配置、プリセットの保存・再読み込み、OFF/ONでの値保持、見た目プレビューの寸法、動きプレビューの小サイズ保存／全画面表示、不正入力時の生成阻止を検証。専用プリセットは `output/canvas_checks/` に保存。
+- `tests/test_digital_renderer.py`：既存デジタル描画の4テスト成功。
+- 実ウィンドウでチェックボックス、見た目タブ最下部の設定、日本語／英語表示、ON時の下中央プレビューを確認。
+- PowerDirectorで今回生成したスペアナペアを読み込む最終確認はユーザー側で実施予定。公開ZIP・EXEは今回更新していない。
 
 ## デジタル描画高速化の追加検証（2026-09-18）
 
@@ -22,7 +66,7 @@ where.exe python
 .\.venv\Scripts\python.exe -B tests/test_digital_renderer.py --encode
 ```
 
-## Automated Checks
+## v1.4.1までの Automated Checks
 
 - Python version check via project `.venv`: Python 3.10.6
 - Python AST parse check: passed for all Python files

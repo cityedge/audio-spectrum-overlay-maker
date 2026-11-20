@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Audio Spectrum Overlay Maker v1.4.1 GUI."""
+"""Audio Spectrum Overlay Maker v1.5.0 GUI."""
 from __future__ import annotations
 
 import importlib
@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -157,6 +158,9 @@ from spectrum_engine import (
     transform_spectrum_data,
 )
 from spectrum_utils import no_window_subprocess_kwargs, runtime_app_dir
+from spectrum_types import OutputCanvasSettings
+from spectrum_output_canvas import CANVAS_ANCHORS, validate_output_canvas
+from spectrum_opacity import prepare_opacity_style, make_matte_style, apply_output_opacity, preview_output_frame
 from ui_tooltips import ToolTip
 
 APP_TITLE = f"Audio Spectrum Overlay Maker {VERSION}"
@@ -187,7 +191,11 @@ def create_composer_handoff(
     audio_path: Path | str | None,
     spectrum_color_path: Path | str | None,
     spectrum_mask_path: Path | str | None,
+    *,
+    opacity_percent: int | None = None,
 ) -> Path:
+    if opacity_percent is not None and (type(opacity_percent) is not int or not 0 <= opacity_percent <= 100):
+        raise ValueError("Asset opacity must be an integer from 0 to 100.")
     handoff_dir = _handoff_base_dir() / "AudioSpectrumOverlayMaker" / "handoff"
     handoff_dir.mkdir(parents=True, exist_ok=True)
     handoff_path = handoff_dir / f"handoff-{uuid.uuid4()}.json"
@@ -202,9 +210,22 @@ def create_composer_handoff(
             "spectrum_mask": _json_path_text(spectrum_mask_path),
         },
     }
+    if opacity_percent is not None and payload["files"]["spectrum_color"]:
+        asset: dict[str, Any] = {"opacity_percent": opacity_percent}
+        if opacity_percent < 100:
+            asset["recommended_compose_mode"] = "multiply_add"
+        payload["spectrum_asset"] = asset
     tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp_path.replace(handoff_path)
     return handoff_path
+
+
+@dataclass(frozen=True)
+class RenderedSpectrum:
+    audio_path: Path
+    video_path: Path
+    mask_path: Path | None
+    opacity_percent: int
 
 
 def composer_self_launch_command(handoff_path: Path) -> list[str]:
@@ -588,12 +609,12 @@ UI_TEXT = {
 }
 
 TOOLTIPS["open_composer"] = (
-    "音源・直近に生成したスペアナ動画・マット動画を渡して、"
-    "SRT Spectrum Video Composer を別プロセスで開きます。未生成の項目は空欄で渡します。"
+    "直近に正常生成した動画・マット・その元音源と不透明度情報を渡して、"
+    "SRT Spectrum Video Composer を開きます。未生成なら選択中の音源だけを渡します。"
 )
 TOOLTIPS_EN["open_composer"] = (
-    "Open SRT Spectrum Video Composer in a separate process, passing only the "
-    "current audio file, spectrum video, and matte video. Missing items are passed as blank values."
+    "Open SRT Spectrum Video Composer with the last successful video, matte, source audio "
+    "and baked-in opacity. Before rendering, pass only the selected audio."
 )
 TOOLTIPS["post_transform_rotate_degrees"] = "静的な回転角度です。キャンバスサイズは維持され、はみ出した部分はクリップされます。"
 TOOLTIPS["post_transform_trapezoid_vertical_percent"] = "-100で上部が小さく、0で変形なし、+100で下部が小さくなります。"
@@ -632,7 +653,53 @@ for _ui_lang, _texts in UI_TEXT.items():
         else "SRT Spectrum Video Composer を開く"
     )
 
+CANVAS_DEFAULTS = {
+    "output_canvas_enabled": False,
+    "output_canvas_width": 1920,
+    "output_canvas_height": 1080,
+    "output_canvas_anchor": "中央下",
+    "output_canvas_offset_x": 0,
+    "output_canvas_offset_y": 0,
+}
+OUTPUT_DEFAULTS = {**CANVAS_DEFAULTS, "opacity_percent": 100, "write_white_png": False}
+for _key, _ja, _en, _tip_ja, _tip_en in (
+    ("opacity_percent", "不透明度%", "Opacity %",
+     "100%は従来出力。100%未満は黒背景・グローなし。乗算＋加算で合成し、編集ソフト側の不透明度は100%にします。",
+     "100% preserves existing output. Below 100% uses black background without glow. Composite with Multiply + Add; keep editor opacity at 100%."),
+    ("write_white_png", "白PNGも出力", "Also Export White PNG",
+     "動画生成の正常完了時、出力動画と同じサイズの完全白PNGを保存します。Difference合成で同じ画像を2枚重ねて使えます。",
+     "After successful MP4 rendering, save a solid-white PNG matching the output video size. Use it twice for Difference compositing."),
+    ("output_canvas_enabled", "全画面キャンバスに出力", "Full-frame Canvas Output",
+     "30秒プレビューと全体生成に共通です。見た目・動きプレビューにも配置を反映します。",
+     "Apply canvas placement to preview/full MP4 output and in-app previews."),
+    ("output_canvas_width", "出力キャンバス幅px", "Output Canvas Width px",
+     "合成先の動画と同じ幅にします。2～7680の偶数を指定してください。",
+     "Match the destination video width. Use an even integer from 2 to 7680."),
+    ("output_canvas_height", "出力キャンバス高さpx", "Output Canvas Height px",
+     "合成先の動画と同じ高さにします。2～7680の偶数を指定してください。",
+     "Match the destination video height. Use an even integer from 2 to 7680."),
+    ("output_canvas_anchor", "キャンバス内の配置", "Canvas Placement",
+     "余白を含むスペアナ描画矩形を配置します。拡大縮小は行いません。",
+     "Align the spectrum rectangle including its margins, without rescaling."),
+    ("output_canvas_offset_x", "横オフセットpx", "Horizontal Offset px",
+     "正値は左・中央配置では右へ、右配置では左へ移動します。負値は逆方向です。",
+     "Positive moves right for left/center anchors, left for right anchors. Negative reverses it."),
+    ("output_canvas_offset_y", "縦オフセットpx", "Vertical Offset px",
+     "正値は上・中央配置では下へ、下配置では上へ移動します。負値は逆方向です。",
+     "Positive moves down for top/center anchors, up for bottom anchors. Negative reverses it."),
+):
+    UI_TEXT["日本語"][_key], UI_TEXT["English"][_key] = _ja, _en
+    TOOLTIPS[_key], TOOLTIPS_EN[_key] = _tip_ja, _tip_en
+TOOLTIPS["edge_glow_mode"] += " 不透明度100%未満では適用しません。"
+TOOLTIPS_EN["edge_glow_mode"] += " Not applied below 100% opacity."
+TOOLTIPS["background_color"] += " 不透明度100%未満では黒背景で出力します。"
+TOOLTIPS_EN["background_color"] += " Below 100% opacity, output uses black instead."
+
 CHOICE_OPTIONS = {
+    "output_canvas_anchor": {
+        "日本語": ["左上", "中央上", "右上", "左中央", "中央", "右中央", "左下", "中央下", "右下"],
+        "English": ["Top Left", "Top Center", "Top Right", "Center Left", "Center", "Center Right", "Bottom Left", "Bottom Center", "Bottom Right"],
+    },
     "scroll_mode": {
         "日本語": ["なし", "左", "右"],
         "English": ["Off", "Left", "Right"],
@@ -741,6 +808,8 @@ class App(tk.Tk):
         self.notebook_tabs: list[tuple[tk.Widget, str]] = []
         self.apply_in_progress = False
         self.motion_frames: list[np.ndarray] = []
+        self.motion_mattes: list[np.ndarray] = []
+        self.motion_render_style: RenderStyle | None = None
         self.motion_photos: list[ImageTk.PhotoImage] = []
         self.motion_index = 0
         self.current_motion_photo: ImageTk.PhotoImage | None = None
@@ -753,8 +822,7 @@ class App(tk.Tk):
         self.motion_thread: threading.Thread | None = None
         self.preview_base_height = 220
         self.preview_resize_after_id: str | None = None
-        self.last_spectrum_video_path: Path | None = None
-        self.last_spectrum_mask_path: Path | None = None
+        self.last_rendered_spectrum: RenderedSpectrum | None = None
         self.last_auto_frequency_range: tuple[float, float] | None = None
         self.auto_frequency_range_label: ttk.Label | None = None
 
@@ -866,6 +934,9 @@ class App(tk.Tk):
             "encoder": tk.StringVar(value="libx264"),
             "x264_preset": tk.StringVar(value="veryfast"),
         }
+        for key, value in OUTPUT_DEFAULTS.items():
+            variable_type = tk.BooleanVar if isinstance(value, bool) else tk.IntVar if isinstance(value, int) else tk.StringVar
+            self.vars[key] = variable_type(value=value)
 
     def current_language(self) -> str:
         value = self.vars.get("language").get() if "language" in self.vars else "日本語"
@@ -992,6 +1063,10 @@ class App(tk.Tk):
 
     def update_edge_glow_state(self) -> None:
         supported = self.edge_glow_background_supported()
+        try:
+            active = supported and self.vars["opacity_percent"].get() == 100
+        except tk.TclError:
+            active = False
         mode_ja = self.normalize_edge_glow_mode_ja(self.edge_glow_mode_ja())
         was_applying = self.apply_in_progress
         self.apply_in_progress = True
@@ -999,13 +1074,13 @@ class App(tk.Tk):
             if not supported and mode_ja != "なし":
                 mode_ja = "なし"
             self.vars["edge_glow_mode"].set(self.choice_from_ja("edge_glow_mode", mode_ja))
-            self.vars["edge_glow_enabled"].set(supported and mode_ja != "なし")
+            self.vars["edge_glow_enabled"].set(active and mode_ja != "なし")
         finally:
             self.apply_in_progress = was_applying
         widget = self.control_widgets.get("edge_glow_mode")
         if widget is not None:
             try:
-                widget.configure(state=("readonly" if supported else "disabled"))
+                widget.configure(state=("readonly" if active else "disabled"))
             except Exception:
                 pass
 
@@ -1203,7 +1278,13 @@ class App(tk.Tk):
         self.cancel_render_button.pack(side="left", padx=(6, 0))
         self.register_text(self.cancel_render_button, "cancel_render")
         self.add_tooltip(self.cancel_render_button, "cancel_render")
-        self.pair_output_check = ttk.Checkbutton(actions, text=self.ui("pair_output"), variable=self.vars["pair_output"])
+        output_options = ttk.Frame(bottom)
+        output_options.grid(row=1, column=0, sticky="ew", pady=(6, 0))
+        self.output_canvas_check = ttk.Checkbutton(output_options, text=self.ui("output_canvas_enabled"), variable=self.vars["output_canvas_enabled"])
+        self.output_canvas_check.pack(side="left")
+        self.register_text(self.output_canvas_check, "output_canvas_enabled")
+        self.add_tooltip(self.output_canvas_check, "output_canvas_enabled")
+        self.pair_output_check = ttk.Checkbutton(output_options, text=self.ui("pair_output"), variable=self.vars["pair_output"])
         self.pair_output_check.pack(side="left", padx=(10, 0))
         self.register_text(self.pair_output_check, "pair_output")
         self.add_tooltip(self.pair_output_check, "pair_output")
@@ -1216,7 +1297,7 @@ class App(tk.Tk):
         self.register_text(self.open_composer_button, "open_composer")
         self.add_tooltip(self.open_composer_button, "open_composer")
         self.log_text = ScrolledText(bottom, height=4, wrap="word", font=("Consolas", 9))
-        self.log_text.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self.log_text.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         self.log_text.configure(state="disabled")
 
     def _build_visual_tab(self) -> None:
@@ -1266,6 +1347,15 @@ class App(tk.Tk):
         self._spin(tab, row, "横幅", "width", 320, 1920, 10); row += 1
         self._spin(tab, row, "高さ", "height", 120, 1080, 10); row += 1
         self._combo(tab, row, "fps", "fps", [24, 30, 60]); row += 1
+        ttk.Separator(tab).grid(row=row, column=0, columnspan=3, sticky="ew", pady=12); row += 1
+        self._spin(tab, row, "出力キャンバス幅px", "output_canvas_width", 2, 7680, 2); row += 1
+        self._spin(tab, row, "出力キャンバス高さpx", "output_canvas_height", 2, 7680, 2); row += 1
+        self._combo(tab, row, "キャンバス内の配置", "output_canvas_anchor", self.choice_values("output_canvas_anchor")); row += 1
+        self._spin(tab, row, "横オフセットpx", "output_canvas_offset_x", -7680, 7680, 1); row += 1
+        self._spin(tab, row, "縦オフセットpx", "output_canvas_offset_y", -7680, 7680, 1); row += 1
+        ttk.Separator(tab).grid(row=row, column=0, columnspan=3, sticky="ew", pady=12); row += 1
+        self._scale(tab, row, "不透明度%", "opacity_percent", 0, 100, snap_integer=True); row += 1
+        self._check(tab, row, "白PNGも出力", "write_white_png"); row += 1
 
     def _build_motion_tab(self) -> None:
         tab = self._make_scrollable_tab("生成・動き", "motion_tab")
@@ -1369,13 +1459,16 @@ class App(tk.Tk):
         self.control_widgets[key] = widget
         self.add_tooltip(widget, key)
 
-    def _scale(self, parent: tk.Widget, row: int, text: str, key: str, frm: int, to: int, reset_to: int | None = None) -> None:
+    def _scale(self, parent: tk.Widget, row: int, text: str, key: str, frm: int, to: int, reset_to: int | None = None, snap_integer: bool = False) -> None:
         self._row_label(parent, row, text, key)
         box = ttk.Frame(parent)
         box.grid(row=row, column=1, sticky="ew", pady=5)
         self.control_widgets[key] = box
         box.columnconfigure(0, weight=1)
         scale = ttk.Scale(box, from_=frm, to=to, variable=self.vars[key], orient="horizontal")
+        if snap_integer:
+            # ttk.Scale writes doubles even when bound to an IntVar.
+            scale.configure(command=lambda value: self.vars[key].set(max(frm, min(to, int(round(float(value)))))))
         scale.grid(row=0, column=0, sticky="ew")
         spin = ttk.Spinbox(box, textvariable=self.vars[key], from_=frm, to=to, increment=1, width=6)
         spin.grid(row=0, column=1, sticky="e", padx=(8, 0))
@@ -1466,7 +1559,7 @@ class App(tk.Tk):
             self.set_auto_frequency_range(None, None)
         elif key == "frequency_mode":
             self.update_auto_frequency_range_label()
-        elif key in {"background_color", "edge_glow_enabled", "edge_glow_mode"}:
+        elif key in {"background_color", "edge_glow_enabled", "edge_glow_mode", "opacity_percent"}:
             self.update_edge_glow_state()
         elif key == "peak_hold_mode":
             self.vars["peak_hold_enabled"].set(self.normalize_peak_hold_mode_ja(str(self.vars["peak_hold_mode"].get())) != "なし")
@@ -1497,6 +1590,9 @@ class App(tk.Tk):
 
         if key == "preview_fit_mode":
             self.after_idle(self.refresh_preview_layout)
+
+        if key in OUTPUT_DEFAULTS:
+            self.after_idle(self.update_still_preview)
 
         if key not in OPERATIONAL_KEYS and key not in {"input_file", "output_dir", "preset"}:
             self.motion_status.configure(text=("Needs update" if self.current_language()=="English" else "要更新"))
@@ -1683,6 +1779,8 @@ class App(tk.Tk):
         self.apply_in_progress = True
         try:
             values = dict(p.get("values", {}))
+            for key, value in OUTPUT_DEFAULTS.items():
+                values.setdefault(key, value)
             values.setdefault("display_mode", "片側バー")
             values.setdefault("color_mode", "縦グラデーション")
             values.setdefault("bar_color2", values.get("bar_color", "#FFFFFF"))
@@ -1815,7 +1913,40 @@ class App(tk.Tk):
         except Exception as exc:
             messagebox.showerror("削除エラー", str(exc))
 
+    def current_output_canvas(self) -> OutputCanvasSettings:
+        if not self.vars["output_canvas_enabled"].get():
+            return OutputCanvasSettings()
+        try:
+            anchor_ja = self.choice_to_ja("output_canvas_anchor", self.vars["output_canvas_anchor"].get())
+            index = CHOICE_OPTIONS["output_canvas_anchor"]["日本語"].index(anchor_ja)
+            # IntVar.get() truncates decimal text; reject it instead for pixel settings.
+            def pixel_value(key: str) -> int:
+                return int(str(self.getvar(str(self.vars[key]))))
+
+            settings = OutputCanvasSettings(
+                enabled=True,
+                width=pixel_value("output_canvas_width"),
+                height=pixel_value("output_canvas_height"),
+                anchor=CANVAS_ANCHORS[index],
+                offset_x=pixel_value("output_canvas_offset_x"),
+                offset_y=pixel_value("output_canvas_offset_y"),
+            )
+            validate_output_canvas(settings)
+            return settings
+        except (ValueError, TypeError, tk.TclError) as exc:
+            message = ("Canvas width/height must be even integers from 2 to 7680; offsets must be integers."
+                       if self.current_language() == "English" else
+                       "出力キャンバスの幅・高さは2～7680の偶数、オフセットは整数で指定してください。")
+            raise ValueError(message) from exc
+
     def current_style(self) -> RenderStyle:
+        try:
+            opacity = int(str(self.getvar(str(self.vars["opacity_percent"]))))
+            if not 0 <= opacity <= 100:
+                raise ValueError
+        except (ValueError, tk.TclError) as exc:
+            raise ValueError("Opacity must be an integer from 0 to 100." if self.current_language() == "English"
+                             else "不透明度は0～100の整数で指定してください。") from exc
         edge_mode_ja = self.normalize_edge_glow_mode_ja(self.edge_glow_mode_ja())
         edge_mode = {
             "薄い": "light",
@@ -1829,7 +1960,7 @@ class App(tk.Tk):
             "ピークのみ": "peaks_only",
             "ピークをバー化": "peak_bars",
         }.get(peak_mode_ja, "off")
-        return RenderStyle(
+        return prepare_opacity_style(RenderStyle(
             width=int(self.vars["width"].get()),
             height=int(self.vars["height"].get()),
             fps=int(self.vars["fps"].get()),
@@ -1860,7 +1991,9 @@ class App(tk.Tk):
             peak_size_percent=int(self.vars["peak_size_percent"].get()),
             digital_peak_segments=int(self.vars["digital_peak_segments"].get()),
             gamma=float(self.vars["gamma"].get()),
-        )
+            output_canvas=self.current_output_canvas(),
+            opacity_percent=opacity,
+        ))
 
     def current_motion(self) -> MotionSettings:
         return MotionSettings(
@@ -2095,7 +2228,10 @@ class App(tk.Tk):
                 self.motion_canvas.configure(height=self.preview_target_height())
             except Exception:
                 pass
-        self.current_motion_photo, render_h = self._fit_photo(self.motion_frames[idx], self.motion_canvas)
+        frame = self.motion_frames[idx]
+        if self.motion_render_style is not None:
+            frame = preview_output_frame(frame, self.motion_render_style, self.motion_mattes[idx] if self.motion_mattes else None)
+        self.current_motion_photo, render_h = self._fit_photo(frame, self.motion_canvas)
         if self.preview_fit_mode_ja() == "幅で揃える":
             target_h = render_h
             try:
@@ -2116,6 +2252,14 @@ class App(tk.Tk):
             vals = transform_spectrum_data(data, transform, motion=motion)[0]
             frame = draw_spectrum_frame(vals, style)
             frame = PostTransformApplier(self.current_post_transform(), style.width, style.height, style.fps, style.background_color).apply(frame, 0, vals)
+            frame = apply_output_opacity(frame, style)
+            matte = None
+            if style.opacity_percent < 100:
+                matte_style = make_matte_style(style)
+                matte = draw_spectrum_frame(vals, matte_style)
+                matte = PostTransformApplier(self.current_post_transform(), style.width, style.height, style.fps, matte_style.background_color).apply(matte, 0, vals)
+                matte = apply_output_opacity(matte, matte_style)
+            frame = preview_output_frame(frame, style, matte)
             self.still_frame_array = frame
             self.redraw_still_canvas()
         except Exception:
@@ -2152,13 +2296,18 @@ class App(tk.Tk):
         input_path = self._validated_input_path()
         if input_path is None:
             return
+        try:
+            style = self.current_style()
+        except (ValueError, tk.TclError) as exc:
+            messagebox.showerror("Settings Error" if self.current_language() == "English" else "設定エラー", str(exc))
+            return
         self.stop_motion_animation()
         self.motion_frames = []
+        self.motion_mattes = []
         self.motion_photos = []
         self._draw_canvas_message(self.motion_canvas, "Analyzing audio..." if self.current_language()=="English" else "実音源を解析しています...")
         self.motion_status.configure(text="Analyzing" if self.current_language()=="English" else "解析中")
         self.set_motion_preview_buttons_state("disabled")
-        style = self.current_style()
         motion = self.current_motion()
         transform = self.current_transform()
         post_transform = self.current_post_transform()
@@ -2195,15 +2344,24 @@ class App(tk.Tk):
     def _load_motion_frames(self, values, detected_start: float, style: RenderStyle, transform: TransformSettings | None = None, post_transform: PostTransformSettings | None = None, audio_values=None) -> None:
         try:
             frames: list[np.ndarray] = []
+            mattes: list[np.ndarray] = []
             peak_values = compute_peak_hold_values(values, style, transform=transform)
             post_applier = PostTransformApplier(post_transform, style.width, style.height, style.fps, style.background_color)
+            matte_style = make_matte_style(style)
+            matte_post = PostTransformApplier(post_transform, style.width, style.height, style.fps, matte_style.background_color)
             for i, v in enumerate(values):
                 band_offset = compute_band_color_offset(i, transform.scroll_mode, transform.scroll_step_frames) if transform is not None else 0
                 peaks = peak_values[i] if peak_values is not None else None
                 frame = draw_spectrum_frame(v, style, band_color_offset=band_offset, peak_values=peaks)
                 frame = post_applier.apply(frame, i, audio_values[i] if audio_values is not None else v)
-                frames.append(frame)
+                frames.append(apply_output_opacity(frame, style))
+                if style.opacity_percent < 100:
+                    matte = draw_spectrum_frame(v, matte_style, band_color_offset=band_offset, peak_values=peaks)
+                    matte = matte_post.apply(matte, i, audio_values[i] if audio_values is not None else v)
+                    mattes.append(apply_output_opacity(matte[:, :, 0], matte_style))
             self.motion_frames = frames
+            self.motion_mattes = mattes
+            self.motion_render_style = style
             self.motion_photos = []
             self.motion_index = 0
             if self.vars["auto_preview_segment"].get():
@@ -2235,6 +2393,8 @@ class App(tk.Tk):
             self.motion_status.configure(text="Stopped" if self.current_language()=="English" else "停止")
             return
         frame = self.motion_frames[self.motion_index]
+        if self.motion_render_style is not None:
+            frame = preview_output_frame(frame, self.motion_render_style, self.motion_mattes[self.motion_index] if self.motion_mattes else None)
         self.current_motion_photo, render_h = self._fit_photo(frame, self.motion_canvas)
         if self.preview_fit_mode_ja() == "幅で揃える":
             try:
@@ -2271,11 +2431,18 @@ class App(tk.Tk):
             return
         out_dir_text = self.vars["output_dir"].get().strip()
         output_dir = Path(out_dir_text) if out_dir_text else input_path.parent
-        style = self.current_style()
+        try:
+            style = self.current_style()
+            write_matte = bool(self.vars["pair_output"].get())
+            scan_seconds = float(self.vars["scan_seconds"].get())
+        except (ValueError, tk.TclError) as exc:
+            messagebox.showerror("Settings Error" if self.current_language() == "English" else "設定エラー", str(exc))
+            return
         motion = self.current_motion()
         transform = self.current_transform()
         post_transform = self.current_post_transform()
         encode = self.current_encode()
+        write_white_png = bool(self.vars["write_white_png"].get())
         # The exported preview MP4 is intended to be placed at the beginning of
         # the editor timeline, so it is always generated from the beginning of
         # the audio.  GUI motion preview still uses auto-detected loud sections.
@@ -2296,8 +2463,6 @@ class App(tk.Tk):
         def worker() -> None:
             nonlocal start, output_path
             try:
-                write_matte = bool(self.vars["pair_output"].get())
-                scan_seconds = float(self.vars["scan_seconds"].get())
                 self.resolve_frequency_range_for_run(input_path, motion, scan_seconds, cancel_token)
                 # Preview MP4 is always from the head of the track.
                 if preview:
@@ -2317,10 +2482,16 @@ class App(tk.Tk):
                     log_callback=self.log_from_thread,
                     write_matte=write_matte,
                     cancel_token=cancel_token,
+                    write_white_png=write_white_png,
                 )
-                actual_path = Path(actual)
-                self.last_spectrum_video_path = actual_path
-                self.last_spectrum_mask_path = build_matte_output_path(actual_path) if write_matte else None
+                actual_path = Path(actual).resolve()
+                # Publish one immutable result so handoff cannot mix separate renders.
+                self.last_rendered_spectrum = RenderedSpectrum(
+                    audio_path=input_path.resolve(),
+                    video_path=actual_path,
+                    mask_path=build_matte_output_path(actual_path) if write_matte else None,
+                    opacity_percent=style.opacity_percent,
+                )
                 self.log_from_thread(f"Saved to: {actual}")
             except RenderCancelled as exc:
                 if exc.keep_partial_videos:
@@ -2352,10 +2523,11 @@ class App(tk.Tk):
         self.log("Cancellation requested. Stopping render...")
 
     def open_srt_spectrum_video_composer(self) -> None:
+        rendered = self.last_rendered_spectrum
         audio_text = self.vars["input_file"].get().strip()
-        audio_path = Path(audio_text) if audio_text else None
-        spectrum_path = self.last_spectrum_video_path
-        mask_path = self.last_spectrum_mask_path
+        audio_path = rendered.audio_path if rendered is not None else (Path(audio_text) if audio_text else None)
+        spectrum_path = rendered.video_path if rendered is not None else None
+        mask_path = rendered.mask_path if rendered is not None else None
         composer_path = find_composer_script()
         if composer_path is None and importlib.util.find_spec("final_composer") is None:
             messagebox.showerror(
@@ -2364,7 +2536,10 @@ class App(tk.Tk):
             )
             return
         try:
-            handoff_path = create_composer_handoff(audio_path, spectrum_path, mask_path)
+            handoff_path = create_composer_handoff(
+                audio_path, spectrum_path, mask_path,
+                opacity_percent=rendered.opacity_percent if rendered is not None else None,
+            )
             command = composer_self_launch_command(handoff_path)
             subprocess.Popen(
                 command,

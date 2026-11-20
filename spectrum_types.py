@@ -12,9 +12,18 @@ from typing import Callable, Tuple
 
 import numpy as np
 
-VERSION = "1.4.1"
+VERSION = "1.5.0"
 RGB = Tuple[int, int, int]
 LogFn = Callable[[str], None] | None
+
+@dataclass(frozen=True)
+class OutputCanvasSettings:
+    enabled: bool = False
+    width: int = 1920
+    height: int = 1080
+    anchor: str = "bottom_center"
+    offset_x: int = 0
+    offset_y: int = 0
 
 @dataclass
 class RenderStyle:
@@ -44,6 +53,10 @@ class RenderStyle:
     peak_size_percent: int = 4
     digital_peak_segments: int = 1
     gamma: float = 0.85
+    output_canvas: OutputCanvasSettings = field(default_factory=OutputCanvasSettings)
+    output_canvas_background: RGB = (0, 0, 0)
+    opacity_percent: int = 100
+    is_matte: bool = False
 
 @dataclass
 class MotionSettings:

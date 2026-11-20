@@ -17,6 +17,8 @@ from spectrum_utils import log, no_window_subprocess_kwargs, resolve_external_to
 from spectrum_draw import draw_spectrum_frame, compute_band_color_offset
 from spectrum_post_transform import PostTransformApplier
 from spectrum_cancel import RenderCancelToken, RenderCancelled
+from spectrum_output_canvas import output_dimensions, place_on_output_canvas
+from spectrum_opacity import prepare_opacity_style, apply_output_opacity
 
 def open_ffmpeg_encoder(output_path: Path, width: int, height: int, fps: int, encode: EncodeSettings) -> subprocess.Popen:
     cmd = [
@@ -44,6 +46,7 @@ def render_video(
     audio_values: np.ndarray | None = None,
     cancel_token: RenderCancelToken | None = None,
 ) -> None:
+    style = prepare_opacity_style(style)
     frame_count, bars = bar_values.shape
     if bars != style.bars:
         raise RuntimeError("Internal error: bar_values does not match style.bars.")
@@ -55,7 +58,8 @@ def render_video(
     log(f"Writing video: {output_path}", log_callback)
     if cancel_token is not None:
         cancel_token.raise_if_cancelled()
-    proc = open_ffmpeg_encoder(output_path, style.width, style.height, style.fps, encode)
+    output_width, output_height = output_dimensions(style)
+    proc = open_ffmpeg_encoder(output_path, output_width, output_height, style.fps, encode)
     if cancel_token is not None:
         cancel_token.register_process(proc)
     if proc.stdin is None:
@@ -77,6 +81,8 @@ def render_video(
             peaks = peak_values[i] if peak_values is not None else None
             frame = draw_spectrum_frame(bar_values[i], style, band_color_offset=band_offset, peak_values=peaks)
             frame = post_applier.apply(frame, i, audio_values[i] if audio_values is not None else bar_values[i])
+            frame = apply_output_opacity(frame, style)
+            frame = place_on_output_canvas(frame, style)
             proc.stdin.write(frame.tobytes())
             written_frames += 1
             if frame_count >= 300 and ((i + 1) % progress_step == 0 or i + 1 == frame_count):
@@ -124,6 +130,8 @@ def render_video(
         stderr = proc.stderr.read().decode("utf-8", errors="replace") if proc.stderr else ""
         return_code = proc.wait()
     finally:
+        if proc.stderr is not None:
+            proc.stderr.close()
         if cancel_token is not None:
             cancel_token.unregister_process(proc)
     if return_code != 0:

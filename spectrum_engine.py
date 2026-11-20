@@ -11,6 +11,7 @@ from spectrum_types import (
     RGB,
     LogFn,
     RenderStyle,
+    OutputCanvasSettings,
     MotionSettings,
     EncodeSettings,
     SpectrumData,
@@ -19,6 +20,7 @@ from spectrum_types import (
     PostTransformSettings,
 )
 from spectrum_cancel import RenderCancelToken, RenderCancelled
+from spectrum_output_canvas import place_on_output_canvas, output_dimensions
 from spectrum_utils import log, parse_color, color_to_hex, unique_path, runtime_app_dir, find_external_tool, resolve_external_tool
 from spectrum_audio import check_environment, run_ffprobe_duration, decode_audio_to_float32_mono
 from spectrum_motion import map_db_to_dynamic_values, smooth_values
@@ -75,7 +77,7 @@ from spectrum_workflow import (
 
 __all__ = [
     "VERSION", "RGB", "LogFn", "RenderCancelToken", "RenderCancelled",
-    "RenderStyle", "MotionSettings", "EncodeSettings", "SpectrumData", "TransformSettings", "PostTransformModulation", "PostTransformSettings",
+    "RenderStyle", "OutputCanvasSettings", "place_on_output_canvas", "output_dimensions", "MotionSettings", "EncodeSettings", "SpectrumData", "TransformSettings", "PostTransformModulation", "PostTransformSettings",
     "log", "parse_color", "color_to_hex", "unique_path", "runtime_app_dir", "find_external_tool", "resolve_external_tool",
     "check_environment", "run_ffprobe_duration", "decode_audio_to_float32_mono",
     "map_db_to_dynamic_values", "smooth_values", "compute_peak_hold_values",
